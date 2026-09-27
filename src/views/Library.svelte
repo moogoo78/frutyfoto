@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { ask } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/api";
+  import { basename, fmtDateTime } from "../lib/format";
   import { PhotoList } from "../lib/photoList.svelte";
   import Stars from "../lib/Stars.svelte";
   import { store } from "../lib/store.svelte";
@@ -40,6 +41,10 @@
     if (viewerIndex != null) grid?.scrollToIndex(viewerIndex);
   });
 
+  const currentImport = $derived(
+    store.view.kind === "import" ? store.imports.find((i) => i.id === (store.view as { id: number }).id) : undefined,
+  );
+
   const title = $derived.by(() => {
     const v = store.view;
     switch (v.kind) {
@@ -47,6 +52,7 @@
       case "trash": return "Trash";
       case "album": return store.albums.find((a) => a.id === v.id)?.name ?? "Album";
       case "tag": return `#${store.tags.find((t) => t.id === v.id)?.name ?? ""}`;
+      case "import": return `Import: ${basename(currentImport?.sourceDir ?? "")}`;
       default: return "All photos";
     }
   });
@@ -124,8 +130,13 @@
 
 <section class="library">
   <header>
-    <h1>{title}</h1>
-    <span class="count">{list.total.toLocaleString()} photos</span>
+    {#if currentImport}
+      <button class="link" onclick={() => store.setView({ kind: "imports" })} title="Back to import history">‹ Imports</button>
+    {/if}
+    <h1 title={currentImport?.sourceDir}>{title}</h1>
+    <span class="count">
+      {list.total.toLocaleString()} photos{#if currentImport} · imported {fmtDateTime(currentImport.startedAt)}{/if}
+    </span>
     <span class="grow"></span>
     {#if inTrash && store.counts.trash > 0}
       <button class="danger" onclick={emptyTrash}>Empty trash</button>
@@ -186,7 +197,7 @@
           <button onclick={() => store.clearQuery()}>Clear filters</button>
         {:else if store.view.kind === "library"}
           <p>Your library is empty.</p>
-          <button class="primary" onclick={() => (store.importOpen = true)}>Import photos</button>
+          <button class="primary" onclick={() => store.openImport()}>Import photos</button>
         {:else if inTrash}
           <p>Trash is empty.</p>
         {:else}

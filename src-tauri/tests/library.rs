@@ -308,3 +308,73 @@ fn tiff_gets_preview_and_backfill_restores_missing_ones() {
     assert!(Path::new(&t.display).is_file());
     assert_eq!(import::backfill_previews(&lib).unwrap(), 0, "nothing left to do");
 }
+
+#[test]
+fn import_history_records_each_run() {
+    let Env { _tmp, src, lib } = env();
+    let (first, second) = (src.join("first"), src.join("second"));
+    write(&first.join("a.jpg"), &jpeg_bytes(&picture(0, 64, 64), 90));
+    write(&first.join("b.jpg"), &jpeg_bytes(&picture(1, 64, 64), 90));
+    write(&first.join("broken.jpg"), b"not really a jpeg");
+    write(&second.join("c.jpg"), &jpeg_bytes(&picture(2, 64, 64), 90));
+    write(&second.join("a-again.jpg"), &jpeg_bytes(&picture(0, 64, 64), 90)); // dup of a.jpg
+
+    import_all(&lib, &first);
+    import_all(&lib, &second);
+
+    let history = queries::list_imports(&lib).unwrap();
+    assert_eq!(history.len(), 2);
+    let (newest, oldest) = (&history[0], &history[1]);
+    assert_eq!(newest.source_dir, second.to_string_lossy());
+    assert_eq!((newest.added, newest.skipped_dupes, newest.failed, newest.photo_count), (1, 1, 0, 1));
+    assert_eq!((oldest.added, oldest.skipped_dupes, oldest.failed, oldest.photo_count), (2, 0, 1, 2));
+    assert!(oldest.finished_at.is_some() && !oldest.cancelled);
+    assert!(oldest.cover.is_some());
+
+    // Failed files are kept with the import.
+    let errors = queries::import_errors(&lib, oldest.id).unwrap();
+    assert_eq!(errors.len(), 1);
+    assert!(errors[0].path.ends_with("broken.jpg"));
+
+    // Photos can be filtered by the import that added them.
+    let names = |id| -> Vec<String> {
+        let f = Filter { import_id: Some(id), ..Default::default() };
+        let mut v: Vec<_> = queries::list_photos(&lib, &f, Sort::TakenAsc, 0, 10).unwrap().into_iter().map(|p| p.orig_name).collect();
+        v.sort();
+        v
+    };
+    assert_eq!(names(oldest.id), vec!["a.jpg", "b.jpg"]);
+    assert_eq!(names(newest.id), vec!["c.jpg"]);
+
+    // Trashed photos no longer count toward an import.
+    let c = queries::list_photos(&lib, &Filter { import_id: Some(newest.id), ..Default::default() }, Sort::TakenAsc, 0, 1).unwrap();
+    queries::trash_photos(&lib, &[c[0].id]).unwrap();
+    assert_eq!(queries::list_imports(&lib).unwrap()[0].photo_count, 0);
+}
+
+#[test]
+fn migration_links_existing_photos_to_their_import() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join(".fotolake")).unwrap();
+    {
+        // A library created before import history existed (schema v1).
+        let conn = rusqlite::Connection::open(tmp.path().join(".fotolake/library.db")).unwrap();
+        conn.execute_batch(foto_lake_lib::db::MIGRATIONS[0]).unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version = 1;
+             INSERT INTO imports (id, source_dir, started_at, finished_at, added)
+               VALUES (1, '/a', '2026-01-01T10:00:00', '2026-01-01T10:05:00', 1),
+                      (2, '/b', '2026-02-01T09:00:00', '2026-02-01T09:00:30', 1);
+             INSERT INTO photos (hash, rel_path, orig_name, taken_at, imported_at, file_size)
+               VALUES ('h1', 'originals/x.jpg', 'x.jpg', '2020-01-01T00:00:00', '2026-01-01T10:02:00', 1),
+                      ('h2', 'originals/y.jpg', 'y.jpg', '2020-01-01T00:00:00', '2026-02-01T09:00:30', 1);",
+        )
+        .unwrap();
+    }
+    let lib = Library::open(tmp.path(), false).unwrap();
+    let import_of = |hash: &str| -> Option<i64> {
+        lib.conn().query_row("SELECT import_id FROM photos WHERE hash = ?1", [hash], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(import_of("h1"), Some(1));
+    assert_eq!(import_of("h2"), Some(2));
+}

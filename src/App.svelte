@@ -3,6 +3,7 @@
   import { store } from "./lib/store.svelte";
   import Duplicates from "./views/Duplicates.svelte";
   import ImportDialog from "./views/ImportDialog.svelte";
+  import ImportHistory from "./views/ImportHistory.svelte";
   import Library from "./views/Library.svelte";
   import Sidebar from "./views/Sidebar.svelte";
   import Welcome from "./views/Welcome.svelte";
@@ -22,6 +23,8 @@
         {#key store.root}
           {#if store.view.kind === "duplicates"}
             <Duplicates />
+          {:else if store.view.kind === "imports"}
+            <ImportHistory />
           {:else}
             <Library />
           {/if}

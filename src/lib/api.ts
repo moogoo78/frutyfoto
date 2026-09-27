@@ -1,6 +1,6 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Album, Bucket, Counts, Filter, ImportProgress, Photo, PhotoDetail, Sort, Tag } from "./types";
+import type { Album, Bucket, Counts, Filter, ImportProgress, ImportRecord, Photo, PhotoDetail, Sort, Tag } from "./types";
 
 export const src = (path: string) => convertFileSrc(path);
 
@@ -10,6 +10,8 @@ export const api = {
 
   startImport: (src: string) => invoke<void>("start_import", { src }),
   cancelImport: () => invoke<void>("cancel_import"),
+  listImports: () => invoke<ImportRecord[]>("list_imports"),
+  importErrors: (importId: number) => invoke<{ path: string; error: string }[]>("import_errors", { importId }),
   onImportProgress: (cb: (p: ImportProgress) => void): Promise<UnlistenFn> =>
     listen<ImportProgress>("import://progress", (e) => cb(e.payload)),
 

@@ -103,7 +103,7 @@ pub fn run(
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let result = import_one(lib, path, &claimed);
+        let result = import_one(lib, import_id, path, &claimed);
         let mut p = progress.lock().unwrap();
         p.done += 1;
         p.current = path.to_string_lossy().into_owned();
@@ -126,15 +126,27 @@ pub fn run(
     let mut p = progress.into_inner().unwrap();
     p.finished = true;
     p.cancelled = cancel.load(Ordering::Relaxed);
-    lib.conn().execute(
-        "UPDATE imports SET finished_at = ?1, added = ?2, skipped_dupes = ?3, failed = ?4 WHERE id = ?5",
-        params![now(), p.added, p.skipped, p.failed, import_id],
-    )?;
+    {
+        let mut conn = lib.conn();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "UPDATE imports SET finished_at = ?1, added = ?2, skipped_dupes = ?3, failed = ?4, cancelled = ?5
+             WHERE id = ?6",
+            params![now(), p.added, p.skipped, p.failed, p.cancelled, import_id],
+        )?;
+        for e in &p.errors {
+            tx.execute(
+                "INSERT INTO import_errors (import_id, path, error) VALUES (?1, ?2, ?3)",
+                params![import_id, e.path, e.error],
+            )?;
+        }
+        tx.commit()?;
+    }
     on_progress(&p);
     Ok(p)
 }
 
-fn import_one(lib: &Library, src: &Path, claimed: &Mutex<HashSet<String>>) -> Result<Outcome> {
+fn import_one(lib: &Library, import_id: i64, src: &Path, claimed: &Mutex<HashSet<String>>) -> Result<Outcome> {
     let hash = hash_file(src)?;
 
     // Claim the hash so identical files within one import aren't copied twice.
@@ -154,14 +166,14 @@ fn import_one(lib: &Library, src: &Path, claimed: &Mutex<HashSet<String>>) -> Re
         claimed.insert(hash.clone());
     }
 
-    let result = copy_and_index(lib, src, &hash);
+    let result = copy_and_index(lib, import_id, src, &hash);
     if result.is_err() {
         claimed.lock().unwrap().remove(&hash);
     }
     result.map(|_| Outcome::Added)
 }
 
-fn copy_and_index(lib: &Library, src: &Path, hash: &str) -> Result<()> {
+fn copy_and_index(lib: &Library, import_id: i64, src: &Path, hash: &str) -> Result<()> {
     let meta = std::fs::metadata(src)?;
     let exif = exif::read(src);
     let taken_at = exif.taken_at.unwrap_or_else(|| mtime(&meta));
@@ -195,8 +207,8 @@ fn copy_and_index(lib: &Library, src: &Path, hash: &str) -> Result<()> {
         .execute(
             "INSERT INTO photos (hash, phash, rel_path, orig_name, source_path, taken_at, imported_at,
                 width, height, file_size, mime, camera_make, camera_model, lens, iso, f_number,
-                exposure, focal_len, gps_lat, gps_lon, orientation)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                exposure, focal_len, gps_lat, gps_lon, orientation, import_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 hash,
                 processed.phash as i64,
@@ -219,6 +231,7 @@ fn copy_and_index(lib: &Library, src: &Path, hash: &str) -> Result<()> {
                 exif.gps_lat,
                 exif.gps_lon,
                 exif.orientation,
+                import_id,
             ],
         )
         .map_err(|e| cleanup(e.into()))?;

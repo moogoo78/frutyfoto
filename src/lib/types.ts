@@ -64,6 +64,7 @@ export interface Filter {
   dateTo?: string;
   tagIds: number[];
   albumId?: number;
+  importId?: number;
   minRating?: number;
   favorite?: boolean;
   camera?: string;
@@ -72,6 +73,21 @@ export interface Filter {
 }
 
 export type Sort = "takenDesc" | "takenAsc" | "importedDesc" | "ratingDesc";
+
+export interface ImportRecord {
+  id: number;
+  sourceDir: string;
+  startedAt: string;
+  /** null if the app quit before the import finished. */
+  finishedAt: string | null;
+  added: number;
+  skippedDupes: number;
+  failed: number;
+  cancelled: boolean;
+  /** Photos from this import still in the library. */
+  photoCount: number;
+  cover: string | null;
+}
 
 export interface ImportProgress {
   importId: number;
@@ -92,5 +108,7 @@ export type View =
   | { kind: "favorites" }
   | { kind: "album"; id: number }
   | { kind: "tag"; id: number }
+  | { kind: "imports" }
+  | { kind: "import"; id: number }
   | { kind: "duplicates" }
   | { kind: "trash" };

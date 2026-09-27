@@ -88,6 +88,7 @@ pub struct Filter {
     /// Photo must carry all of these tags.
     pub tag_ids: Vec<i64>,
     pub album_id: Option<i64>,
+    pub import_id: Option<i64>,
     pub min_rating: Option<i64>,
     pub favorite: Option<bool>,
     pub camera: Option<String>,
@@ -149,6 +150,10 @@ fn where_clause(f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
     if let Some(a) = f.album_id {
         clauses.push("p.id IN (SELECT photo_id FROM album_photos WHERE album_id = ?)".into());
         args.push(Box::new(a));
+    }
+    if let Some(i) = f.import_id {
+        clauses.push("p.import_id = ?".into());
+        args.push(Box::new(i));
     }
     if let Some(r) = f.min_rating.filter(|r| *r > 0) {
         clauses.push("p.rating >= ?".into());
@@ -435,6 +440,59 @@ pub fn counts(lib: &Library) -> Result<Counts> {
         [],
         |r| Ok(Counts { all: r.get(0)?, favorites: r.get(1)?, trash: r.get(2)? }),
     )?)
+}
+
+// ---- import history ----
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportRecord {
+    pub id: i64,
+    pub source_dir: String,
+    pub started_at: String,
+    /// None if the app quit before the import finished.
+    pub finished_at: Option<String>,
+    pub added: i64,
+    pub skipped_dupes: i64,
+    pub failed: i64,
+    pub cancelled: bool,
+    /// Photos from this import still in the library (not trashed).
+    pub photo_count: i64,
+    pub cover: Option<String>,
+}
+
+pub fn list_imports(lib: &Library) -> Result<Vec<ImportRecord>> {
+    let conn = lib.conn();
+    let mut stmt = conn.prepare(
+        "SELECT i.id, i.source_dir, i.started_at, i.finished_at, i.added, i.skipped_dupes, i.failed, i.cancelled,
+            (SELECT COUNT(*) FROM photos p WHERE p.import_id = i.id AND p.trashed_at IS NULL),
+            (SELECT p.hash FROM photos p WHERE p.import_id = i.id AND p.trashed_at IS NULL
+               ORDER BY p.taken_at LIMIT 1)
+         FROM imports i ORDER BY i.id DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let cover: Option<String> = r.get(9)?;
+        Ok(ImportRecord {
+            id: r.get(0)?,
+            source_dir: r.get(1)?,
+            started_at: r.get(2)?,
+            finished_at: r.get(3)?,
+            added: r.get(4)?,
+            skipped_dupes: r.get(5)?,
+            failed: r.get(6)?,
+            cancelled: r.get(7)?,
+            photo_count: r.get(8)?,
+            cover: cover.map(|h| lib.thumb_path(&h).to_string_lossy().into_owned()),
+        })
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn import_errors(lib: &Library, import_id: i64) -> Result<Vec<crate::import::ImportFailure>> {
+    let conn = lib.conn();
+    let mut stmt = conn.prepare("SELECT path, error FROM import_errors WHERE import_id = ?1 ORDER BY path")?;
+    let rows = stmt.query_map([import_id], |r| Ok(crate::import::ImportFailure { path: r.get(0)?, error: r.get(1)? }))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 // ---- duplicates & trash ----

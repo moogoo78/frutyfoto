@@ -5,7 +5,8 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Each entry upgrades the schema by one version (tracked in PRAGMA user_version).
-const MIGRATIONS: &[&str] = &[r#"
+pub const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE photos (
     id           INTEGER PRIMARY KEY,
     hash         TEXT NOT NULL UNIQUE,
@@ -71,7 +72,29 @@ CREATE TABLE imports (
     skipped_dupes INTEGER NOT NULL DEFAULT 0,
     failed        INTEGER NOT NULL DEFAULT 0
 );
-"#];
+"#,
+    // v2: link photos to the import that added them; keep per-file import errors.
+    r#"
+ALTER TABLE photos ADD COLUMN import_id INTEGER REFERENCES imports(id);
+ALTER TABLE imports ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX idx_photos_import ON photos(import_id);
+
+CREATE TABLE import_errors (
+    import_id INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+    path      TEXT NOT NULL,
+    error     TEXT NOT NULL
+);
+CREATE INDEX idx_import_errors_import ON import_errors(import_id);
+
+-- Existing photos: attribute each to the import whose time window contains it.
+UPDATE photos SET import_id = (
+    SELECT i.id FROM imports i
+    WHERE photos.imported_at >= i.started_at
+      AND photos.imported_at <= COALESCE(i.finished_at, '9999')
+    ORDER BY i.id DESC LIMIT 1
+);
+"#,
+];
 
 pub fn open(path: &Path) -> Result<Connection> {
     let mut conn = Connection::open(path)?;

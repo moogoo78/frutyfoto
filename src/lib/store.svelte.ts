@@ -1,7 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api } from "./api";
 import { errorText } from "./format";
-import type { Album, Counts, Filter, ImportProgress, Sort, Tag, View } from "./types";
+import type { Album, Counts, Filter, ImportProgress, ImportRecord, Sort, Tag, View } from "./types";
 
 interface Toast {
   id: number;
@@ -23,12 +23,15 @@ class Store {
   albums = $state.raw<Album[]>([]);
   cameras = $state.raw<string[]>([]);
   counts = $state.raw<Counts>({ all: 0, favorites: 0, trash: 0 });
+  imports = $state.raw<ImportRecord[]>([]);
 
   selection = new SvelteSet<number>();
   /** Bumped whenever photo data changes, so lists re-fetch. */
   version = $state(0);
 
   importOpen = $state(false);
+  /** Source folder to prefill when the import dialog opens. */
+  importPreset = $state("");
   progress = $state.raw<ImportProgress | null>(null);
   toasts = $state<Toast[]>([]);
 
@@ -48,6 +51,7 @@ class Store {
       text: q.text || undefined,
       tagIds,
       albumId: v.kind === "album" ? v.id : undefined,
+      importId: v.kind === "import" ? v.id : undefined,
       favorite: v.kind === "favorites" ? true : undefined,
       trashed: v.kind === "trash",
     };
@@ -84,6 +88,11 @@ class Store {
     }
   }
 
+  openImport(source = "") {
+    this.importPreset = source;
+    this.importOpen = true;
+  }
+
   setView(view: View) {
     this.view = view;
     this.selection.clear();
@@ -95,19 +104,25 @@ class Store {
   }
 
   async refreshMeta() {
-    const [tags, albums, cameras, counts] = await Promise.all([
+    const [tags, albums, cameras, counts, imports] = await Promise.all([
       api.listTags(),
       api.listAlbums(),
       api.listCameras(),
       api.counts(),
+      api.listImports(),
     ]);
+    this.imports = imports;
     this.tags = tags;
     this.albums = albums;
     this.cameras = cameras;
     this.counts = counts;
     // Leave views that no longer exist.
     const v = this.view;
-    if ((v.kind === "album" && !albums.some((a) => a.id === v.id)) || (v.kind === "tag" && !tags.some((t) => t.id === v.id))) {
+    if (
+      (v.kind === "album" && !albums.some((a) => a.id === v.id)) ||
+      (v.kind === "tag" && !tags.some((t) => t.id === v.id)) ||
+      (v.kind === "import" && !imports.some((i) => i.id === v.id))
+    ) {
       this.setView({ kind: "library" });
     }
   }

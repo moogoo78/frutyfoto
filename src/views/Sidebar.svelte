@@ -54,7 +54,7 @@
   <div class="brand">
     <span class="logo">◒</span> foto-lake
   </div>
-  <button class="primary import" onclick={() => (store.importOpen = true)}>＋ Import photos</button>
+  <button class="primary import" onclick={() => store.openImport()}>＋ Import photos</button>
 
   <div class="section">
     <button class="item" class:active={is({ kind: "library" })} onclick={() => store.setView({ kind: "library" })}>
@@ -62,6 +62,10 @@
     </button>
     <button class="item" class:active={is({ kind: "favorites" })} onclick={() => store.setView({ kind: "favorites" })}>
       <span>Favorites</span><small>{store.counts.favorites}</small>
+    </button>
+    <button class="item" class:active={store.view.kind === "imports" || store.view.kind === "import"}
+      onclick={() => store.setView({ kind: "imports" })}>
+      <span>Imports</span><small>{store.imports.length || ""}</small>
     </button>
     <button class="item" class:active={is({ kind: "duplicates" })} onclick={() => store.setView({ kind: "duplicates" })}>
       <span>Duplicates</span>

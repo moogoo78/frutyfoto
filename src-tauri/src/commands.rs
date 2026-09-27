@@ -7,6 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::error::{AppError, Result};
 use crate::import::{self, ImportFailure, ImportProgress};
+use crate::queries::ImportRecord;
 use crate::library::Library;
 use crate::queries::{self, Album, Bucket, Counts, Filter, Photo, PhotoDetail, Sort, Tag};
 
@@ -131,6 +132,16 @@ pub async fn start_import(app: AppHandle, state: State<'_, AppState>, src: Strin
 pub async fn cancel_import(state: State<'_, AppState>) -> Result<()> {
     state.import_cancel.store(true, Ordering::SeqCst);
     Ok(())
+}
+
+#[tauri::command]
+pub async fn list_imports(state: State<'_, AppState>) -> Result<Vec<ImportRecord>> {
+    queries::list_imports(&*state.lib()?)
+}
+
+#[tauri::command]
+pub async fn import_errors(state: State<'_, AppState>, import_id: i64) -> Result<Vec<ImportFailure>> {
+    queries::import_errors(&*state.lib()?, import_id)
 }
 
 #[tauri::command]

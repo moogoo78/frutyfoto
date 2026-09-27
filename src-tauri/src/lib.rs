@@ -24,6 +24,8 @@ pub fn run() {
             current_library,
             start_import,
             cancel_import,
+            list_imports,
+            import_errors,
             list_photos,
             photo_date_buckets,
             get_photo,

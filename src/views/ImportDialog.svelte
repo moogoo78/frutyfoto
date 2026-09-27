@@ -7,6 +7,14 @@
   let source = $state("");
   let started = $state(false);
 
+  // "Import again" from the history view prefills the folder.
+  $effect(() => {
+    if (store.importOpen && store.importPreset && !started) {
+      source = store.importPreset;
+      store.importPreset = "";
+    }
+  });
+
   const p = $derived(started ? store.progress : null);
   const running = $derived(started && !p?.finished);
   const pct = $derived(p && p.total ? Math.round((p.done / p.total) * 100) : 0);
