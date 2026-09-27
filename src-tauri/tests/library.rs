@@ -82,7 +82,7 @@ fn env() -> Env {
 
 #[test]
 fn import_organises_by_date_and_skips_duplicates() {
-    let Env { src, lib, .. } = env();
+    let Env { _tmp, src, lib } = env();
 
     let a = with_exif(jpeg_bytes(&picture(0, 320, 240), 90), "2021:07:15 10:20:30", "TestCam X1");
     write(&src.join("a.jpg"), &a);
@@ -133,14 +133,14 @@ fn import_organises_by_date_and_skips_duplicates() {
 
 #[test]
 fn refuses_to_import_the_library_itself() {
-    let Env { lib, .. } = env();
+    let Env { _tmp, lib, .. } = env();
     let err = import::run(&lib, &lib.root.join("originals"), &AtomicBool::new(false), |_| {});
     assert!(err.is_err());
 }
 
 #[test]
 fn near_duplicates_are_grouped() {
-    let Env { src, lib, .. } = env();
+    let Env { _tmp, src, lib } = env();
     let base = picture(0, 800, 600);
     write(&src.join("orig.jpg"), &jpeg_bytes(&base, 92));
     let small = DynamicImage::ImageRgb8(base).resize_exact(400, 300, image::imageops::FilterType::Triangle);
@@ -160,7 +160,7 @@ fn near_duplicates_are_grouped() {
 
 #[test]
 fn tags_albums_ratings_and_filters() {
-    let Env { src, lib, .. } = env();
+    let Env { _tmp, src, lib } = env();
     for (i, day) in ["2020:01:01", "2020:06:15", "2021:12:31"].iter().enumerate() {
         let bytes = with_exif(jpeg_bytes(&picture(i as u32, 64, 64), 90), &format!("{day} 08:00:00"), "Cam");
         write(&src.join(format!("p{i}.jpg")), &bytes);
@@ -213,7 +213,7 @@ fn tags_albums_ratings_and_filters() {
 
 #[test]
 fn trash_restore_and_empty() {
-    let Env { src, lib, .. } = env();
+    let Env { _tmp, src, lib } = env();
     write(&src.join("x.jpg"), &jpeg_bytes(&picture(0, 64, 64), 90));
     write(&src.join("y.jpg"), &jpeg_bytes(&picture(1, 64, 64), 90));
     import_all(&lib, &src);
@@ -246,4 +246,65 @@ fn reopening_requires_existing_library() {
     assert!(Library::open(tmp.path(), false).is_err());
     Library::open(tmp.path(), true).unwrap();
     Library::open(tmp.path(), false).unwrap();
+}
+
+#[test]
+fn imports_heic_with_exif_thumbnail_and_preview() {
+    let Env { _tmp, src, lib } = env();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.heic");
+    std::fs::copy(&fixture, src.join("IMG_0001.HEIC")).unwrap();
+    // Same picture as a JPEG must not affect the HEIC row.
+    write(&src.join("other.jpg"), &jpeg_bytes(&picture(1, 64, 64), 90));
+
+    let p = import_all(&lib, &src);
+    assert_eq!((p.added, p.failed), (2, 0), "errors: {:?}", p.errors);
+
+    let photos = queries::list_photos(&lib, &Filter::default(), Sort::TakenDesc, 0, 10).unwrap();
+    let heic = photos.iter().find(|p| p.orig_name == "IMG_0001.HEIC").unwrap();
+    assert_eq!(heic.taken_at, "2022-05-06T07:08:09", "EXIF date read from HEIC");
+    assert_eq!(heic.camera_model.as_deref(), Some("HeicCam 9"));
+    assert_eq!((heic.width, heic.height), (Some(320), Some(240)));
+    assert_eq!(heic.mime.as_deref(), Some("image/heic"));
+    assert!(lib.root.join("originals/2022/05/06/IMG_0001.HEIC").is_file());
+
+    // Viewer gets a decodable JPEG preview; thumbnail exists too.
+    assert!(heic.display.ends_with(".jpg") && heic.display != heic.path);
+    let preview = image::open(&heic.display).unwrap();
+    assert_eq!((preview.width(), preview.height()), (320, 240));
+    assert!(Path::new(&heic.thumb).is_file());
+
+    // Non-HEIC photos are displayed from the original file.
+    let jpg = photos.iter().find(|p| p.orig_name == "other.jpg").unwrap();
+    assert_eq!(jpg.display, jpg.path);
+
+    // Emptying trash removes the preview as well.
+    queries::trash_photos(&lib, &[heic.id]).unwrap();
+    queries::empty_trash(&lib).unwrap();
+    assert!(!Path::new(&heic.display).exists());
+}
+
+#[test]
+fn tiff_gets_preview_and_backfill_restores_missing_ones() {
+    let Env { _tmp, src, lib } = env();
+    let tif = src.join("scan.tif");
+    DynamicImage::ImageRgb8(picture(2, 300, 200)).save_with_format(&tif, ImageFormat::Tiff).unwrap();
+    write(&src.join("plain.png"), &{
+        let mut v = Vec::new();
+        DynamicImage::ImageRgb8(picture(0, 64, 64)).write_to(&mut Cursor::new(&mut v), ImageFormat::Png).unwrap();
+        v
+    });
+    assert_eq!(import_all(&lib, &src).added, 2);
+
+    let photos = queries::list_photos(&lib, &Filter::default(), Sort::TakenDesc, 0, 10).unwrap();
+    let t = photos.iter().find(|p| p.orig_name == "scan.tif").unwrap();
+    assert_eq!(t.mime.as_deref(), Some("image/tiff"));
+    assert!(t.display.ends_with(".jpg") && t.display != t.path);
+    let preview = image::open(&t.display).unwrap();
+    assert_eq!((preview.width(), preview.height()), (300, 200));
+
+    // A library imported before TIFF previews existed has none; backfill makes them.
+    std::fs::remove_file(&t.display).unwrap();
+    assert_eq!(import::backfill_previews(&lib).unwrap(), 1);
+    assert!(Path::new(&t.display).is_file());
+    assert_eq!(import::backfill_previews(&lib).unwrap(), 0, "nothing left to do");
 }

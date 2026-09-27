@@ -32,8 +32,10 @@ pub struct Photo {
     pub rating: i64,
     pub favorite: bool,
     pub trashed_at: Option<String>,
-    /// Absolute paths, filled in from the library root.
+    /// Absolute paths, filled in from the library root. `display` is what the
+    /// viewer shows: the original, or a JPEG preview for formats like HEIC.
     pub path: String,
+    pub display: String,
     pub thumb: String,
 }
 
@@ -45,9 +47,12 @@ fn photo_from_row(lib: &Library, r: &Row) -> rusqlite::Result<Photo> {
     let hash: String = r.get(1)?;
     let rel_path: String = r.get(2)?;
     let trashed_at: Option<String> = r.get(22)?;
+    let path = lib.photo_path(&rel_path, trashed_at.is_some());
+    let display = if crate::import::needs_preview(&path) { lib.preview_path(&hash) } else { path.clone() };
     Ok(Photo {
         id: r.get(0)?,
-        path: lib.photo_path(&rel_path, trashed_at.is_some()).to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
+        display: display.to_string_lossy().into_owned(),
         thumb: lib.thumb_path(&hash).to_string_lossy().into_owned(),
         hash,
         rel_path,
@@ -511,6 +516,7 @@ pub fn empty_trash(lib: &Library) -> Result<usize> {
             Err(e) => return Err(e.into()),
         }
         let _ = std::fs::remove_file(lib.thumb_path(hash));
+        let _ = std::fs::remove_file(lib.preview_path(hash));
         lib.conn().execute("DELETE FROM photos WHERE id = ?1", [id])?;
     }
     Ok(items.len())

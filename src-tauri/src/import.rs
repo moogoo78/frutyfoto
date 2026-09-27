@@ -16,7 +16,10 @@ use crate::error::{AppError, Result};
 use crate::library::Library;
 use crate::{exif, thumbs};
 
-pub const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff", "gif"];
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "tif", "tiff", "gif", "heic", "heif", "hif"];
+
+/// Formats the webview (WebKitGTK) can't display; these get a full-size JPEG preview for the viewer.
+const PREVIEW_EXTENSIONS: &[&str] = &["heic", "heif", "hif", "tif", "tiff"];
 
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -46,10 +49,16 @@ enum Outcome {
     Duplicate,
 }
 
+fn extension(path: &Path) -> Option<String> {
+    path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase())
+}
+
 pub fn is_supported(path: &Path) -> bool {
-    path.extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+    extension(path).is_some_and(|e| SUPPORTED_EXTENSIONS.contains(&e.as_str()))
+}
+
+pub fn needs_preview(path: &Path) -> bool {
+    extension(path).is_some_and(|e| PREVIEW_EXTENSIONS.contains(&e.as_str()))
 }
 
 /// Copies every supported image under `src` into the library. Source files are only read.
@@ -162,15 +171,19 @@ fn copy_and_index(lib: &Library, src: &Path, hash: &str) -> Result<()> {
     let orig_name = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let (dest, file) = reserve_dest(&dir, &orig_name)?;
     let thumb = lib.thumb_path(hash);
+    let preview = needs_preview(src).then(|| lib.preview_path(hash));
 
     let cleanup = |e: AppError| {
         let _ = std::fs::remove_file(&dest);
         let _ = std::fs::remove_file(&thumb);
+        if let Some(p) = &preview {
+            let _ = std::fs::remove_file(p);
+        }
         e
     };
 
     copy_verified(src, file, hash).map_err(cleanup)?;
-    let processed = thumbs::process(&dest, &thumb).map_err(cleanup)?;
+    let processed = thumbs::process(&dest, &thumb, preview.as_deref()).map_err(cleanup)?;
 
     let rel_path = dest
         .strip_prefix(&lib.root)
@@ -248,6 +261,34 @@ fn copy_verified(src: &Path, mut dest: File, expected_hash: &str) -> Result<()> 
     Ok(())
 }
 
+/// Creates any missing previews, e.g. for photos imported before their format got one.
+/// Per-photo failures are logged and skipped. Returns how many previews were made.
+pub fn backfill_previews(lib: &Library) -> Result<usize> {
+    let rows: Vec<(String, String, bool)> = {
+        let conn = lib.conn();
+        let mut stmt = conn.prepare("SELECT hash, rel_path, trashed_at IS NOT NULL FROM photos")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let made = rows
+        .par_iter()
+        .filter(|(hash, rel, trashed)| {
+            needs_preview(Path::new(rel)) && !lib.preview_path(hash).exists() && lib.photo_path(rel, *trashed).is_file()
+        })
+        .filter(|(hash, rel, trashed)| {
+            let src = lib.photo_path(rel, *trashed);
+            match thumbs::decode_upright(&src).and_then(|img| thumbs::write_preview(&img, &lib.preview_path(hash))) {
+                Ok(()) => true,
+                Err(e) => {
+                    eprintln!("preview for {} failed: {e}", src.display());
+                    false
+                }
+            }
+        })
+        .count();
+    Ok(made)
+}
+
 pub fn hash_file(path: &Path) -> Result<String> {
     let mut hasher = blake3::Hasher::new();
     hasher.update_reader(File::open(path)?)?;
@@ -261,12 +302,14 @@ fn mtime(meta: &std::fs::Metadata) -> NaiveDateTime {
 }
 
 fn mime_for(path: &Path) -> &'static str {
-    match path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+    match extension(path).as_deref() {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("webp") => "image/webp",
         Some("tif" | "tiff") => "image/tiff",
         Some("gif") => "image/gif",
+        Some("heic" | "hif") => "image/heic",
+        Some("heif") => "image/heif",
         _ => "application/octet-stream",
     }
 }

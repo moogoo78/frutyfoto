@@ -66,7 +66,13 @@ fn activate(app: &AppHandle, root: &Path, create: bool) -> Result<LibraryInfo> {
         .allow_directory(&lib.root, true)
         .map_err(|e| AppError::msg(e.to_string()))?;
     let info = LibraryInfo { root: lib.root.to_string_lossy().into_owned() };
-    *app.state::<AppState>().library.lock().unwrap() = Some(Arc::new(lib));
+    let lib = Arc::new(lib);
+    *app.state::<AppState>().library.lock().unwrap() = Some(lib.clone());
+    std::thread::spawn(move || match import::backfill_previews(&lib) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("created {n} missing preview(s)"),
+        Err(e) => eprintln!("preview backfill failed: {e}"),
+    });
     save_config(app, &Config { last_library: Some(root.to_path_buf()) });
     Ok(info)
 }

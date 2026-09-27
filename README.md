@@ -10,6 +10,7 @@ sorted by date, then lets you browse, rate, tag, group into albums and weed out 
   originals/YYYY/MM/DD/<name>[-N].<ext>   # copied photos (sources are never modified)
   .fotolake/library.db                     # SQLite index
   .fotolake/thumbs/<xx>/<hash>.jpg         # 400px thumbnails
+  .fotolake/previews/<xx>/<hash>.jpg       # full-size JPEG for HEIC/TIFF (webview can't show them)
   .fotolake/trash/                         # trashed photos (restorable until emptied)
 ```
 
@@ -17,7 +18,9 @@ The date comes from EXIF `DateTimeOriginal` → `DateTimeDigitized` → `DateTim
 Exact duplicates (same BLAKE3 hash) are skipped at import; near-duplicates are found with a
 64-bit perceptual hash in the **Duplicates** view.
 
-Supported formats: JPEG, PNG, WebP, TIFF, GIF.
+Supported formats: JPEG, PNG, WebP, TIFF, GIF, HEIC/HEIF. HEIC is decoded with libheif + libde265
+(compiled into the app). HEIC and TIFF get a full-size JPEG preview in `.fotolake/previews/`
+for the viewer; missing previews are created in the background when a library is opened.
 
 ## Development (Docker)
 

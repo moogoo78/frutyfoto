@@ -23,6 +23,8 @@ export interface Photo {
   favorite: boolean;
   trashedAt: string | null;
   path: string;
+  /** What the viewer shows: the original, or a JPEG preview for HEIC. */
+  display: string;
   thumb: string;
 }
 

@@ -19,6 +19,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 kamadak-exif = "0.6"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "tiff", "gif"] }
 image_hasher = "3"
+libheif-rs = { version = "3", features = ["embedded-libheif", "image"] }
 blake3 = "1"
 walkdir = "2"
 rayon = "1"

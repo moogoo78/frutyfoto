@@ -30,7 +30,7 @@ impl Library {
             }
         }
         let root = root.to_path_buf();
-        for dir in ["originals", ".fotolake/thumbs", ".fotolake/trash"] {
+        for dir in ["originals", ".fotolake/thumbs", ".fotolake/previews", ".fotolake/trash"] {
             std::fs::create_dir_all(root.join(dir))?;
         }
         let conn = db::open(&db_path)?;
@@ -51,6 +51,11 @@ impl Library {
 
     pub fn thumb_path(&self, hash: &str) -> PathBuf {
         self.root.join(META_DIR).join("thumbs").join(&hash[..2]).join(format!("{hash}.jpg"))
+    }
+
+    /// Full-size JPEG rendition for formats the webview can't display (e.g. HEIC).
+    pub fn preview_path(&self, hash: &str) -> PathBuf {
+        self.root.join(META_DIR).join("previews").join(&hash[..2]).join(format!("{hash}.jpg"))
     }
 
     /// Absolute path of a photo's file; trashed files live under the trash dir.

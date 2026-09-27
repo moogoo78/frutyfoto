@@ -72,7 +72,7 @@
 <div class="viewer">
   <div class="stage">
     {#if photo}
-      <img src={src(photo.path)} alt={photo.origName} />
+      <img src={src(photo.display)} alt={photo.origName} />
     {/if}
     <button class="nav prev" disabled={index <= 0} onclick={() => step(-1)} aria-label="Previous">‹</button>
     <button class="nav next" disabled={index >= list.total - 1} onclick={() => step(1)} aria-label="Next">›</button>
