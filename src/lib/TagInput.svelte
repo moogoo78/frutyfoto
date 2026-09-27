@@ -32,5 +32,5 @@
 </datalist>
 
 <style>
-  input { width: 140px; }
+  input { width: 180px; }
 </style>
