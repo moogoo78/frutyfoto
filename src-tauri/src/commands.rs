@@ -62,9 +62,10 @@ pub fn restore_last_library(app: &AppHandle) {
 
 fn activate(app: &AppHandle, root: &Path, create: bool) -> Result<LibraryInfo> {
     let lib = Library::open(root, create)?;
-    app.asset_protocol_scope()
-        .allow_directory(&lib.root, true)
-        .map_err(|e| AppError::msg(e.to_string()))?;
+    let scope = app.asset_protocol_scope();
+    for dir in lib.served_dirs() {
+        scope.allow_directory(&dir, true).map_err(|e| AppError::msg(e.to_string()))?;
+    }
     let info = LibraryInfo { root: lib.root.to_string_lossy().into_owned() };
     let lib = Arc::new(lib);
     *app.state::<AppState>().library.lock().unwrap() = Some(lib.clone());

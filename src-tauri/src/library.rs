@@ -49,13 +49,27 @@ impl Library {
         self.root.join(META_DIR).join("trash")
     }
 
+    pub fn thumbs_dir(&self) -> PathBuf {
+        self.root.join(META_DIR).join("thumbs")
+    }
+
+    pub fn previews_dir(&self) -> PathBuf {
+        self.root.join(META_DIR).join("previews")
+    }
+
+    /// Folders the webview loads images from. Those inside the hidden `.fotolake` dir must
+    /// be listed explicitly: Tauri's scope doesn't match dot-directories via `**` on Unix.
+    pub fn served_dirs(&self) -> [PathBuf; 4] {
+        [self.originals_dir(), self.thumbs_dir(), self.previews_dir(), self.trash_dir()]
+    }
+
     pub fn thumb_path(&self, hash: &str) -> PathBuf {
-        self.root.join(META_DIR).join("thumbs").join(&hash[..2]).join(format!("{hash}.jpg"))
+        self.thumbs_dir().join(&hash[..2]).join(format!("{hash}.jpg"))
     }
 
     /// Full-size JPEG rendition for formats the webview can't display (e.g. HEIC).
     pub fn preview_path(&self, hash: &str) -> PathBuf {
-        self.root.join(META_DIR).join("previews").join(&hash[..2]).join(format!("{hash}.jpg"))
+        self.previews_dir().join(&hash[..2]).join(format!("{hash}.jpg"))
     }
 
     /// Absolute path of a photo's file; trashed files live under the trash dir.
