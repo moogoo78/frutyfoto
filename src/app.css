@@ -1,0 +1,88 @@
+:root {
+  --bg: #16181c;
+  --panel: #1e2126;
+  --cell: #2a2e35;
+  --hover: #2a2e35;
+  --border: #2f333a;
+  --fg: #e6e8eb;
+  --muted: #8b929c;
+  --accent: #3fa9d6;
+  --accent-bg: rgb(63 169 214 / 0.16);
+  --accent-fg: #8fd3f0;
+  --star: #ffc94d;
+  --ok: #5cc98a;
+  --danger: #ef6a6a;
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --cell: #e4e7eb;
+    --hover: #eef0f3;
+    --border: #dde1e6;
+    --fg: #1d2024;
+    --muted: #6b7380;
+    --accent: #1f86b5;
+    --accent-bg: rgb(31 134 181 / 0.12);
+    --accent-fg: #17698e;
+    --star: #e8a400;
+    --ok: #238a50;
+    --danger: #d23c3c;
+    color-scheme: light;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans", "Noto Sans CJK TC", sans-serif;
+  font-size: 14px;
+  overflow: hidden;
+  user-select: none;
+}
+
+input, select, textarea { user-select: text; }
+
+button, input, select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--cell);
+  cursor: pointer;
+}
+button:hover:not(:disabled) { filter: brightness(1.15); }
+button:disabled { opacity: 0.5; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.danger { color: var(--danger); }
+button.active { border-color: var(--accent); color: var(--accent-fg); }
+button.link { background: none; border: none; color: var(--accent); padding: 0; }
+
+input:not([type="range"]):not([type="radio"]):not([type="checkbox"]), select {
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+code { font-size: 0.92em; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 9px;
+  border-radius: 999px; background: var(--accent-bg); color: var(--accent-fg); font-size: 12px;
+}
+.chip button { background: none; border: none; padding: 0 4px; color: inherit; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--cell); border-radius: 5px; }

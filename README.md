@@ -1,0 +1,55 @@
+# foto-lake
+
+A desktop photo organizer (Tauri 2 + Svelte 5). Import copies photos into a managed library
+sorted by date, then lets you browse, rate, tag, group into albums and weed out duplicates.
+
+## Library layout
+
+```
+<library>/
+  originals/YYYY/MM/DD/<name>[-N].<ext>   # copied photos (sources are never modified)
+  .fotolake/library.db                     # SQLite index
+  .fotolake/thumbs/<xx>/<hash>.jpg         # 400px thumbnails
+  .fotolake/trash/                         # trashed photos (restorable until emptied)
+```
+
+The date comes from EXIF `DateTimeOriginal` → `DateTimeDigitized` → `DateTime` → file mtime.
+Exact duplicates (same BLAKE3 hash) are skipped at import; near-duplicates are found with a
+64-bit perceptual hash in the **Duplicates** view.
+
+Supported formats: JPEG, PNG, WebP, TIFF, GIF.
+
+## Development (Docker)
+
+Everything builds and runs in a container; the window is shown on the host display via Wayland
+(X11 fallback).
+
+```sh
+docker compose build                      # dev image: Rust, Node 22, pnpm, webkit2gtk
+docker compose up dev                     # pnpm install && pnpm tauri dev
+docker compose run --rm sh bash -c "cd src-tauri && cargo test"
+docker compose run --rm sh pnpm check     # svelte-check / tsc
+docker compose run --rm bundle            # .deb + AppImage into ./release
+```
+
+**For real use, run the AppImage** (`./release/foto-lake_*.AppImage`). It runs natively,
+bundles WebKit (so nothing needs installing on the host), and its folder picker can see all your
+files. The dev container can only see the folders mounted into it (below).
+
+Inside the dev container, the host's `~/Pictures` (override with `PHOTOS_DIR=...`) is mounted
+read-only at `/photos`, and `./library-dev` is mounted at `/library`. Use those paths in the
+folder pickers.
+
+## Keyboard shortcuts
+
+| Key | Grid (selection) | Viewer |
+| --- | --- | --- |
+| `0`–`5` | set rating | set rating |
+| `F` | toggle favorite | toggle favorite |
+| `T` | focus tag input | focus tag input |
+| `Del` | trash / restore | trash / restore |
+| `Ctrl+A` / `Esc` | select all / clear | — / close |
+| `Enter` / double-click | open viewer | — |
+| `←` `→` / `I` | — | previous/next / toggle info |
+
+Drag thumbnails onto an album in the sidebar to add them. Double-click an album to rename it.

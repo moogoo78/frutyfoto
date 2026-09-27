@@ -1,0 +1,8 @@
+node_modules
+dist
+release
+library-dev
+src-tauri/target
+src-tauri/gen
+*.db
+.pnpm-store

@@ -1,0 +1,62 @@
+x-base: &base
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.dev
+  image: foto-lake-dev
+  working_dir: /app
+  volumes:
+    - .:/app
+    - node_modules:/app/node_modules
+    - cargo_registry:/usr/local/cargo/registry
+    - target:/app/src-tauri/target
+    - pnpm_store:/home/dev/.local/share/pnpm
+
+services:
+  # Runs the app with the GUI shown on the host display (Wayland, X11 fallback).
+  dev:
+    <<: *base
+    command: sh -c "pnpm install && pnpm tauri dev"
+    environment:
+      XDG_RUNTIME_DIR: /tmp/runtime
+      WAYLAND_DISPLAY: ${WAYLAND_DISPLAY:-wayland-0}
+      DISPLAY: ${DISPLAY:-:0}
+      XAUTHORITY: /tmp/.Xauthority
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      GSETTINGS_BACKEND: memory
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - cargo_registry:/usr/local/cargo/registry
+      - target:/app/src-tauri/target
+      - pnpm_store:/home/dev/.local/share/pnpm
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/${WAYLAND_DISPLAY:-wayland-0}:/tmp/runtime/${WAYLAND_DISPLAY:-wayland-0}
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${XAUTHORITY:-/dev/null}:/tmp/.Xauthority:ro
+      - ${PHOTOS_DIR:-~/Pictures}:/photos:ro
+      - ./library-dev:/library
+    ipc: host
+    # GPU for WebKit rendering; remove if the host has no /dev/dri.
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - video
+      - "${RENDER_GID:-992}"  # host render group id (getent group render)
+
+  # One-off shell / tests:  docker compose run --rm sh cargo test ...
+  sh:
+    <<: *base
+    command: bash
+
+  # Produces .deb / AppImage into ./release
+  bundle:
+    <<: *base
+    command: >
+      sh -c "pnpm install && pnpm tauri build --bundles deb,appimage
+      && mkdir -p release && cp -r src-tauri/target/release/bundle/deb/*.deb src-tauri/target/release/bundle/appimage/*.AppImage release/"
+
+volumes:
+  node_modules:
+  cargo_registry:
+  target:
+  pnpm_store:
