@@ -25,6 +25,16 @@
     </label>
   {/if}
   <label>
+    Source
+    <select bind:value={q.origin}>
+      <option value="">Any</option>
+      <option value="camera">Camera</option>
+      <option value="phone">Phone</option>
+      <option value="unknown">Unknown</option>
+      {#each store.sources as s}<option value={s}>{s}</option>{/each}
+    </select>
+  </label>
+  <label>
     Tags
     <select
       onchange={(e) => {

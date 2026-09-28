@@ -8,11 +8,35 @@ sorted by date, then lets you browse, rate, tag, group into albums and weed out 
 ```
 <library>/
   originals/YYYY/MM/DD/<name>[-N].<ext>   # copied photos (sources are never modified)
+  albums/<album>/<name>[-N].<ext>         # photos that belong to an album
   .fotolake/library.db                     # SQLite index
   .fotolake/thumbs/<xx>/<hash>.jpg         # 400px thumbnails
   .fotolake/previews/<xx>/<hash>.jpg       # full-size JPEG for HEIC/TIFF (webview can't show them)
   .fotolake/trash/                         # trashed photos (restorable until emptied)
 ```
+
+Import files photos by date under `originals/`. Adding a photo to an album **moves the file** into
+`albums/<album>/`; renaming the album renames the folder. A photo in several albums lives in the
+first one's folder; when it leaves all albums it goes back to `originals/YYYY/MM/DD/`. To make an
+album from a day, hover the day header in the grid and click **＋ New album** (or select photos and
+click **＋ New album** in the selection bar).
+
+**Empty trash** moves the files to the system Trash (not a permanent delete), so they can still be
+recovered from the desktop.
+
+### Marks (fast culling)
+
+While browsing, press `X` to mark photos for deletion and `1`–`4` for custom actions (press again
+to unmark). The **Marks** view sets up what each of `1`–`4` does — *copy to folder* (e.g. another
+disk; `albums/Trip/a.jpg` → `<target>/Trip/a.jpg`, identical copies are skipped), *add to album* or
+*add tag* — and runs a mark on all its photos in one batch. `X` moves them to the library trash.
+Processed photos lose their mark.
+
+### Sources
+
+Each photo shows whether it came from a **phone** or a **camera** (guessed from EXIF make/model) in
+album views and the viewer. You can label a source yourself (e.g. LINE, Facebook) per photo, for the
+selection, or for a whole import in the import dialog; filter by it in **Filter → Source**.
 
 The date comes from EXIF `DateTimeOriginal` → `DateTimeDigitized` → `DateTime` → file mtime.
 Exact duplicates (same BLAKE3 hash) are skipped at import; near-duplicates are found with a
@@ -47,7 +71,8 @@ folder pickers.
 
 | Key | Grid (selection) | Viewer |
 | --- | --- | --- |
-| `0`–`5` | set rating | set rating |
+| `X` / `1`–`4` | toggle mark | toggle mark |
+| `Shift`+`0`–`5` | set rating | set rating |
 | `F` | toggle favorite | toggle favorite |
 | `T` | focus tag input | focus tag input |
 | `Del` | trash / restore | trash / restore |

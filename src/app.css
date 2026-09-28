@@ -91,3 +91,14 @@ code { font-size: 0.92em; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--cell); border-radius: 5px; }
+
+/* Culling marks: x = delete, 1-4 = custom actions. */
+.mark {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 4px; font-size: 12px; font-weight: 700; color: #fff; background: var(--muted); text-transform: uppercase;
+}
+.mark-x { background: var(--danger); }
+.mark-1 { background: #e08a1e; }
+.mark-2 { background: #2f9e5f; }
+.mark-3 { background: #2b87c0; }
+.mark-4 { background: #8e5cd9; }

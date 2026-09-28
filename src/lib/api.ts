@@ -1,6 +1,8 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { Album, Bucket, Counts, Filter, ImportProgress, ImportRecord, Photo, PhotoDetail, Sort, Tag } from "./types";
+import type {
+  Album, Bucket, Counts, Filter, ImportProgress, ImportRecord, Mark, MarkActionKind, MarkSlot, Photo, PhotoDetail, RunResult, Sort, Tag,
+} from "./types";
 
 export const src = (path: string) => convertFileSrc(path);
 
@@ -8,7 +10,7 @@ export const api = {
   openLibrary: (path: string, create: boolean) => invoke<{ root: string }>("open_library", { path, create }),
   currentLibrary: () => invoke<{ root: string } | null>("current_library"),
 
-  startImport: (src: string) => invoke<void>("start_import", { src }),
+  startImport: (src: string, source: string) => invoke<void>("start_import", { src, source: source || null }),
   cancelImport: () => invoke<void>("cancel_import"),
   listImports: () => invoke<ImportRecord[]>("list_imports"),
   importErrors: (importId: number) => invoke<{ path: string; error: string }[]>("import_errors", { importId }),
@@ -41,4 +43,15 @@ export const api = {
   trashPhotos: (ids: number[]) => invoke<void>("trash_photos", { ids }),
   restorePhotos: (ids: number[]) => invoke<void>("restore_photos", { ids }),
   emptyTrash: () => invoke<number>("empty_trash"),
+
+  setMark: (ids: number[], mark: Mark | null) => invoke<void>("set_mark", { ids, mark }),
+  listMarks: () => invoke<MarkSlot[]>("list_marks"),
+  setMarkAction: (slot: number, label: string, kind: MarkActionKind | null, target: string) =>
+    invoke<void>("set_mark_action", { slot, label, kind, target }),
+  runMark: (mark: Mark) => invoke<RunResult>("run_mark", { mark }),
+  onMarkProgress: (cb: (p: { mark: Mark; done: number; total: number }) => void): Promise<UnlistenFn> =>
+    listen<{ mark: Mark; done: number; total: number }>("marks://progress", (e) => cb(e.payload)),
+
+  listSources: () => invoke<string[]>("list_sources"),
+  setSource: (ids: number[], source: string) => invoke<void>("set_source", { ids, source }),
 };

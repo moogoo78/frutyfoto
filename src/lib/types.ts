@@ -22,6 +22,11 @@ export interface Photo {
   rating: number;
   favorite: boolean;
   trashedAt: string | null;
+  mark: Mark | null;
+  /** Where the photo came from, set by the user (e.g. "LINE"). */
+  source: string | null;
+  /** Guessed from EXIF make/model. */
+  device: "phone" | "camera" | "unknown";
   path: string;
   /** What the viewer shows: the original, or a JPEG preview for HEIC. */
   display: string;
@@ -57,6 +62,7 @@ export interface Counts {
   all: number;
   favorites: number;
   trash: number;
+  marked: number;
 }
 
 export interface Filter {
@@ -69,6 +75,10 @@ export interface Filter {
   favorite?: boolean;
   camera?: string;
   text?: string;
+  /** A mark, or "any" for every marked photo. */
+  mark?: string;
+  /** The user-set source, else "phone" / "camera" / "unknown". */
+  origin?: string;
   trashed: boolean;
 }
 
@@ -110,5 +120,29 @@ export type View =
   | { kind: "tag"; id: number }
   | { kind: "imports" }
   | { kind: "import"; id: number }
+  | { kind: "marks" }
+  | { kind: "mark"; mark: Mark }
   | { kind: "duplicates" }
   | { kind: "trash" };
+
+/** "x" marks a photo for deletion; "1".."4" are custom actions. */
+export type Mark = "x" | "1" | "2" | "3" | "4";
+export const MARKS: Mark[] = ["x", "1", "2", "3", "4"];
+
+export type MarkActionKind = "trash" | "copy" | "album" | "tag";
+
+export interface MarkSlot {
+  mark: Mark;
+  label: string;
+  /** null for a custom mark that hasn't been set up. */
+  kind: MarkActionKind | null;
+  /** Folder (copy), album id (album) or tag name (tag). */
+  target: string;
+  count: number;
+}
+
+export interface RunResult {
+  done: number;
+  skipped: number;
+  errors: string[];
+}

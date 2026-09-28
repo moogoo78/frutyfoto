@@ -20,6 +20,7 @@ fn library_images_are_served_but_database_is_not() {
         lib.preview_path(&hash),
         lib.photo_path("originals/2024/01/02/a.jpg", false),
         lib.photo_path("originals/2024/01/02/a.jpg", true),
+        lib.photo_path("albums/Trip/a.jpg", false),
     ] {
         assert!(scope.is_allowed(&path), "should be served: {}", path.display());
     }

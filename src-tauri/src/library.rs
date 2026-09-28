@@ -30,7 +30,7 @@ impl Library {
             }
         }
         let root = root.to_path_buf();
-        for dir in ["originals", ".fotolake/thumbs", ".fotolake/previews", ".fotolake/trash"] {
+        for dir in ["originals", "albums", ".fotolake/thumbs", ".fotolake/previews", ".fotolake/trash"] {
             std::fs::create_dir_all(root.join(dir))?;
         }
         let conn = db::open(&db_path)?;
@@ -43,6 +43,11 @@ impl Library {
 
     pub fn originals_dir(&self) -> PathBuf {
         self.root.join("originals")
+    }
+
+    /// Photos that belong to an album are stored in `albums/<album folder>/`.
+    pub fn albums_dir(&self) -> PathBuf {
+        self.root.join("albums")
     }
 
     pub fn trash_dir(&self) -> PathBuf {
@@ -59,8 +64,8 @@ impl Library {
 
     /// Folders the webview loads images from. Those inside the hidden `.fotolake` dir must
     /// be listed explicitly: Tauri's scope doesn't match dot-directories via `**` on Unix.
-    pub fn served_dirs(&self) -> [PathBuf; 4] {
-        [self.originals_dir(), self.thumbs_dir(), self.previews_dir(), self.trash_dir()]
+    pub fn served_dirs(&self) -> [PathBuf; 5] {
+        [self.originals_dir(), self.albums_dir(), self.thumbs_dir(), self.previews_dir(), self.trash_dir()]
     }
 
     pub fn thumb_path(&self, hash: &str) -> PathBuf {

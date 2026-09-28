@@ -27,6 +27,14 @@ export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
+/** Source badge text: the user-set source, else Phone / Camera (empty if unknown). */
+export function originLabel(p: { source: string | null; device: string }): string {
+  if (p.source) return p.source;
+  return p.device === "phone" ? "Phone" : p.device === "camera" ? "Camera" : "";
+}
+
+export const SOURCE_SUGGESTIONS = ["LINE", "Facebook", "Instagram", "WhatsApp", "Messenger", "Telegram", "WeChat", "Web", "Scan"];
+
 export function errorText(e: unknown): string {
   return typeof e === "string" ? e : e instanceof Error ? e.message : JSON.stringify(e);
 }

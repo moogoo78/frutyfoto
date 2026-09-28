@@ -2,9 +2,12 @@
   import { open } from "@tauri-apps/plugin-dialog";
   import { api } from "../lib/api";
   import { errorText } from "../lib/format";
+  import SourceInput from "../lib/SourceInput.svelte";
   import { store } from "../lib/store.svelte";
 
   let source = $state("");
+  /** Optional label for where these photos came from (e.g. LINE). */
+  let origin = $state("");
   let started = $state(false);
 
   // "Import again" from the history view prefills the folder.
@@ -27,7 +30,7 @@
   async function start() {
     store.progress = null;
     try {
-      await api.startImport(source);
+      await api.startImport(source, origin);
       started = true;
     } catch (e) {
       store.toast(errorText(e), true);
@@ -57,6 +60,10 @@
           <input readonly value={source} placeholder="No folder selected" onclick={pick} />
           <button onclick={pick}>Browse…</button>
         </div>
+        <label class="origin">
+          <span>Source <small>(optional — e.g. photos saved from LINE or Facebook)</small></span>
+          <SourceInput bind:value={origin} submitOnEnter={false} placeholder="Camera / phone detected automatically" />
+        </label>
         <div class="buttons">
           <button onclick={close}>Cancel</button>
           <button class="primary" disabled={!source} onclick={start}>Import</button>
@@ -86,7 +93,7 @@
           {#if running}
             <button onclick={() => api.cancelImport()}>Stop</button>
           {:else}
-            <button onclick={() => { started = false; source = ""; }}>Import more</button>
+            <button onclick={() => { started = false; source = ""; origin = ""; }}>Import more</button>
             <button class="primary" onclick={close}>Done</button>
           {/if}
         </div>
@@ -103,6 +110,9 @@
   .hint { color: var(--muted); font-size: 13px; line-height: 1.5; }
   .pick { display: flex; gap: 8px; }
   .pick input { flex: 1; cursor: pointer; }
+  .origin { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; }
+  .origin small { color: var(--muted); }
+  .origin :global(input) { width: 100%; }
   .buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   .bar { height: 8px; border-radius: 4px; background: var(--cell); overflow: hidden; }
   .bar div { height: 100%; background: var(--accent); transition: width 0.2s; }

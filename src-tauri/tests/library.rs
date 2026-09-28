@@ -61,7 +61,7 @@ fn write(path: &Path, bytes: &[u8]) {
 }
 
 fn import_all(lib: &Library, src: &Path) -> ImportProgress {
-    import::run(lib, src, &AtomicBool::new(false), |_| {}).unwrap()
+    import::run(lib, src, None, &AtomicBool::new(false), |_| {}).unwrap()
 }
 
 struct Env {
@@ -76,6 +76,11 @@ fn env() -> Env {
     std::fs::create_dir_all(&src).unwrap();
     let lib = Library::open(&tmp.path().join("lib"), true).unwrap();
     Env { _tmp: tmp, src, lib }
+}
+
+/// Empties the trash without touching the real system Trash.
+fn empty_trash(lib: &Library) -> foto_lake_lib::error::Result<usize> {
+    queries::empty_trash_with(lib, |p| Ok(std::fs::remove_file(p)?))
 }
 
 // ---- tests ----
@@ -134,7 +139,7 @@ fn import_organises_by_date_and_skips_duplicates() {
 #[test]
 fn refuses_to_import_the_library_itself() {
     let Env { _tmp, lib, .. } = env();
-    let err = import::run(&lib, &lib.root.join("originals"), &AtomicBool::new(false), |_| {});
+    let err = import::run(&lib, &lib.root.join("originals"), None, &AtomicBool::new(false), |_| {});
     assert!(err.is_err());
 }
 
@@ -231,7 +236,7 @@ fn trash_restore_and_empty() {
     assert!(Path::new(&x.path).is_file());
 
     queries::trash_photos(&lib, &[x.id]).unwrap();
-    assert_eq!(queries::empty_trash(&lib).unwrap(), 1);
+    assert_eq!(empty_trash(&lib).unwrap(), 1);
     assert!(!Path::new(&x.thumb).exists());
     let c = queries::counts(&lib).unwrap();
     assert_eq!((c.all, c.trash), (1, 0));
@@ -279,7 +284,7 @@ fn imports_heic_with_exif_thumbnail_and_preview() {
 
     // Emptying trash removes the preview as well.
     queries::trash_photos(&lib, &[heic.id]).unwrap();
-    queries::empty_trash(&lib).unwrap();
+    empty_trash(&lib).unwrap();
     assert!(!Path::new(&heic.display).exists());
 }
 
@@ -377,4 +382,212 @@ fn migration_links_existing_photos_to_their_import() {
     };
     assert_eq!(import_of("h1"), Some(1));
     assert_eq!(import_of("h2"), Some(2));
+}
+
+// ---- album folders, marks, sources ----
+
+fn rel_of(lib: &Library, id: i64) -> String {
+    queries::get_photo(lib, id).unwrap().photo.rel_path
+}
+
+/// Imports three photos taken on 2021-07-15 and returns their ids (oldest first).
+fn three_photos(lib: &Library, src: &Path) -> Vec<i64> {
+    for i in 0..3 {
+        let bytes = with_exif(jpeg_bytes(&picture(i, 64, 64), 90), &format!("2021:07:15 0{i}:00:00"), "Cam");
+        write(&src.join(format!("p{i}.jpg")), &bytes);
+    }
+    import_all(lib, src);
+    queries::list_photos(lib, &Filter::default(), Sort::TakenAsc, 0, 10).unwrap().iter().map(|p| p.id).collect()
+}
+
+#[test]
+fn album_photos_are_stored_in_album_folders() {
+    let Env { _tmp, src, lib } = env();
+    let ids = three_photos(&lib, &src);
+    let trip = queries::create_album(&lib, "Trip: Kyoto/Osaka").unwrap();
+    let best = queries::create_album(&lib, "Best").unwrap();
+
+    queries::add_to_album(&lib, trip, &ids[..2]).unwrap();
+    assert_eq!(rel_of(&lib, ids[0]), "albums/Trip_ Kyoto_Osaka/p0.jpg");
+    assert!(lib.root.join("albums/Trip_ Kyoto_Osaka/p1.jpg").is_file());
+    assert!(!lib.root.join("originals/2021/07/15/p0.jpg").exists());
+    assert_eq!(rel_of(&lib, ids[2]), "originals/2021/07/15/p2.jpg", "not in an album");
+
+    // A second album only links; the file stays in its first album's folder.
+    queries::add_to_album(&lib, best, &ids[..1]).unwrap();
+    assert_eq!(rel_of(&lib, ids[0]), "albums/Trip_ Kyoto_Osaka/p0.jpg");
+
+    // Renaming the album renames its folder.
+    queries::rename_album(&lib, trip, "Japan").unwrap();
+    assert_eq!(rel_of(&lib, ids[0]), "albums/Japan/p0.jpg");
+    assert!(lib.root.join("albums/Japan/p1.jpg").is_file());
+    assert!(!lib.root.join("albums/Trip_ Kyoto_Osaka").exists());
+
+    // Trashed album photos keep their place inside the trash and follow renames too.
+    queries::trash_photos(&lib, &[ids[1]]).unwrap();
+    assert!(lib.trash_dir().join("albums/Japan/p1.jpg").is_file());
+    queries::rename_album(&lib, trip, "Japan 2021").unwrap();
+    assert!(lib.trash_dir().join("albums/Japan 2021/p1.jpg").is_file());
+    queries::restore_photos(&lib, &[ids[1]]).unwrap();
+    assert!(lib.root.join("albums/Japan 2021/p1.jpg").is_file());
+
+    // Leaving the home album moves the file to the next album it's in...
+    queries::remove_from_album(&lib, trip, &[ids[0]]).unwrap();
+    assert_eq!(rel_of(&lib, ids[0]), "albums/Best/p0.jpg");
+    // ...or back to originals by date.
+    queries::delete_album(&lib, best).unwrap();
+    assert_eq!(rel_of(&lib, ids[0]), "originals/2021/07/15/p0.jpg");
+    assert!(!lib.root.join("albums/Best").exists(), "empty album folder removed");
+    queries::delete_album(&lib, trip).unwrap();
+    assert_eq!(rel_of(&lib, ids[1]), "originals/2021/07/15/p1.jpg");
+
+    for id in &ids {
+        let p = queries::get_photo(&lib, *id).unwrap().photo;
+        assert!(Path::new(&p.path).is_file(), "{} exists", p.path);
+    }
+}
+
+#[test]
+fn same_named_files_get_unique_names_in_an_album() {
+    let Env { _tmp, src, lib } = env();
+    write(&src.join("a/IMG_1.jpg"), &with_exif(jpeg_bytes(&picture(0, 64, 64), 90), "2021:01:01 00:00:00", "Cam"));
+    write(&src.join("b/IMG_1.jpg"), &with_exif(jpeg_bytes(&picture(1, 64, 64), 90), "2022:01:01 00:00:00", "Cam"));
+    import_all(&lib, &src);
+    let ids: Vec<i64> =
+        queries::list_photos(&lib, &Filter::default(), Sort::TakenAsc, 0, 10).unwrap().iter().map(|p| p.id).collect();
+    let album = queries::create_album(&lib, "Mix").unwrap();
+    queries::add_to_album(&lib, album, &ids).unwrap();
+    let mut rels: Vec<_> = ids.iter().map(|id| rel_of(&lib, *id)).collect();
+    rels.sort();
+    assert_eq!(rels, vec!["albums/Mix/IMG_1-1.jpg", "albums/Mix/IMG_1.jpg"]);
+}
+
+#[test]
+fn existing_album_photos_are_moved_into_folders_on_open() {
+    let Env { _tmp, src, lib } = env();
+    let ids = three_photos(&lib, &src);
+    let album = queries::create_album(&lib, "Old").unwrap();
+    // As an older version would have left it: linked, but the file still in originals.
+    lib.conn().execute("INSERT INTO album_photos (album_id, photo_id) VALUES (?1, ?2)", [album, ids[0]]).unwrap();
+    assert_eq!(foto_lake_lib::storage::rehome_all(&lib).unwrap(), 1);
+    assert_eq!(rel_of(&lib, ids[0]), "albums/Old/p0.jpg");
+    assert!(lib.root.join("albums/Old/p0.jpg").is_file());
+    assert_eq!(foto_lake_lib::storage::rehome_all(&lib).unwrap(), 0);
+}
+
+#[test]
+fn marks_are_set_filtered_and_run() {
+    use foto_lake_lib::marks::{self, ActionKind};
+    let Env { _tmp, src, lib } = env();
+    let ids = three_photos(&lib, &src);
+    let find = |f: Filter| -> Vec<i64> {
+        queries::list_photos(&lib, &f, Sort::TakenAsc, 0, 10).unwrap().iter().map(|p| p.id).collect()
+    };
+
+    marks::set_mark(&lib, &[ids[0]], Some("x")).unwrap();
+    marks::set_mark(&lib, &ids[1..], Some("1")).unwrap();
+    assert!(marks::set_mark(&lib, &ids, Some("9")).is_err());
+    assert_eq!(find(Filter { mark: Some("1".into()), ..Default::default() }), ids[1..]);
+    assert_eq!(find(Filter { mark: Some("any".into()), ..Default::default() }).len(), 3);
+    assert_eq!(queries::counts(&lib).unwrap().marked, 3);
+
+    // Unconfigured custom marks can't run.
+    assert!(marks::run(&lib, "1", |_, _| {}).is_err());
+
+    // x -> library trash.
+    let r = marks::run(&lib, "x", |_, _| {}).unwrap();
+    assert_eq!(r.done, 1);
+    assert_eq!(queries::counts(&lib).unwrap().trash, 1);
+
+    // 1 -> copy to another disk, keeping the date folders; marks are cleared after.
+    let out = _tmp.path().join("usb");
+    std::fs::create_dir_all(&out).unwrap();
+    marks::set_action(&lib, 1, "Backup", Some(ActionKind::Copy), &out.to_string_lossy()).unwrap();
+    let slots = marks::list_slots(&lib).unwrap();
+    assert_eq!((slots[1].label.as_str(), slots[1].count), ("Backup", 2));
+    let r = marks::run(&lib, "1", |_, _| {}).unwrap();
+    assert_eq!((r.done, r.skipped, r.errors.len()), (2, 0, 0));
+    assert!(out.join("2021/07/15/p1.jpg").is_file() && out.join("2021/07/15/p2.jpg").is_file());
+    assert_eq!(queries::counts(&lib).unwrap().marked, 0);
+    // Running again with identical copies present skips them.
+    marks::set_mark(&lib, &ids[1..2], Some("1")).unwrap();
+    let r = marks::run(&lib, "1", |_, _| {}).unwrap();
+    assert_eq!((r.done, r.skipped), (0, 1));
+    assert!(!out.join("2021/07/15/p1-1.jpg").exists());
+
+    // 2 -> album (moves files into its folder), 3 -> tag.
+    let album = queries::create_album(&lib, "Picks").unwrap();
+    marks::set_action(&lib, 2, "", Some(ActionKind::Album), &album.to_string()).unwrap();
+    marks::set_action(&lib, 3, "", Some(ActionKind::Tag), "keeper").unwrap();
+    marks::set_mark(&lib, &ids[1..2], Some("2")).unwrap();
+    marks::set_mark(&lib, &ids[2..], Some("3")).unwrap();
+    marks::run(&lib, "2", |_, _| {}).unwrap();
+    marks::run(&lib, "3", |_, _| {}).unwrap();
+    assert_eq!(rel_of(&lib, ids[1]), "albums/Picks/p1.jpg");
+    assert_eq!(queries::get_photo(&lib, ids[2]).unwrap().tags[0].name, "keeper");
+
+    // Removing an action setup.
+    marks::set_action(&lib, 3, "", None, "").unwrap();
+    assert!(marks::list_slots(&lib).unwrap()[3].kind.is_none());
+    assert!(marks::set_action(&lib, 1, "", Some(ActionKind::Trash), "").is_err());
+}
+
+#[test]
+fn sources_and_device_kind() {
+    use foto_lake_lib::db::device_kind;
+    assert_eq!(device_kind(Some("Apple"), Some("iPhone 15 Pro")), "phone");
+    assert_eq!(device_kind(Some("samsung"), Some("SM-S918B")), "phone");
+    assert_eq!(device_kind(Some("SONY"), Some("ILCE-7M4")), "camera");
+    assert_eq!(device_kind(Some("Sony"), Some("Xperia 1 V")), "phone");
+    assert_eq!(device_kind(Some("FUJIFILM"), Some("X-T5")), "camera");
+    assert_eq!(device_kind(None, None), "unknown");
+
+    let Env { _tmp, src, lib } = env();
+    write(&src.join("cam/a.jpg"), &with_exif(jpeg_bytes(&picture(0, 64, 64), 90), "2021:01:01 00:00:00", "ILCE-7M4"));
+    write(&src.join("cam/b.jpg"), &with_exif(jpeg_bytes(&picture(1, 64, 64), 90), "2021:01:01 00:00:00", "iPhone 15"));
+    import_all(&lib, &src.join("cam"));
+    // Photos saved from a chat app have no EXIF; label the whole import.
+    write(&src.join("line/c.jpg"), &jpeg_bytes(&picture(2, 64, 64), 90));
+    import::run(&lib, &src.join("line"), Some(" LINE "), &AtomicBool::new(false), |_| {}).unwrap();
+
+    let names = |origin: &str| -> Vec<String> {
+        let f = Filter { origin: Some(origin.into()), ..Default::default() };
+        queries::list_photos(&lib, &f, Sort::TakenAsc, 0, 10).unwrap().into_iter().map(|p| p.orig_name).collect()
+    };
+    assert_eq!(names("camera"), vec!["a.jpg"]);
+    assert_eq!(names("phone"), vec!["b.jpg"]);
+    assert_eq!(names("LINE"), vec!["c.jpg"]);
+    assert_eq!(foto_lake_lib::marks::list_sources(&lib).unwrap(), vec!["LINE"]);
+
+    let a = queries::list_photos(&lib, &Filter { origin: Some("camera".into()), ..Default::default() }, Sort::TakenAsc, 0, 1)
+        .unwrap()[0]
+        .clone();
+    assert_eq!((a.device, a.source.as_deref()), ("camera", None));
+    foto_lake_lib::marks::set_source(&lib, &[a.id], "Facebook").unwrap();
+    assert_eq!(names("Facebook"), vec!["a.jpg"]);
+    foto_lake_lib::marks::set_source(&lib, &[a.id], "  ").unwrap();
+    assert_eq!(names("camera"), vec!["a.jpg"]);
+}
+
+#[test]
+fn emptying_trash_hands_files_to_the_system_trash() {
+    let Env { _tmp, src, lib } = env();
+    let ids = three_photos(&lib, &src);
+    let album = queries::create_album(&lib, "A").unwrap();
+    queries::add_to_album(&lib, album, &ids[..1]).unwrap();
+    queries::trash_photos(&lib, &ids[..2]).unwrap();
+
+    let discarded = std::sync::Mutex::new(Vec::new());
+    let n = queries::empty_trash_with(&lib, |p| {
+        discarded.lock().unwrap().push(p.file_name().unwrap().to_string_lossy().into_owned());
+        Ok(std::fs::remove_file(p)?)
+    })
+    .unwrap();
+    assert_eq!(n, 2);
+    let mut d = discarded.into_inner().unwrap();
+    d.sort();
+    assert_eq!(d, vec!["p0.jpg", "p1.jpg"]);
+    // Empty folders left in the trash are cleaned up.
+    assert_eq!(std::fs::read_dir(lib.trash_dir().join("albums")).unwrap().count(), 0);
+    assert_eq!(std::fs::read_dir(lib.trash_dir().join("originals")).unwrap().count(), 0);
 }

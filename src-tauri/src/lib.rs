@@ -5,7 +5,9 @@ pub mod error;
 pub mod exif;
 pub mod import;
 pub mod library;
+pub mod marks;
 pub mod queries;
+pub mod storage;
 pub mod thumbs;
 
 use commands::*;
@@ -47,6 +49,12 @@ pub fn run() {
             trash_photos,
             restore_photos,
             empty_trash,
+            set_mark,
+            list_marks,
+            set_mark_action,
+            run_mark,
+            list_sources,
+            set_source,
         ])
         .run(tauri::generate_context!())
         .expect("error while running foto-lake");

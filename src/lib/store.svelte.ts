@@ -1,7 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api } from "./api";
 import { errorText } from "./format";
-import type { Album, Counts, Filter, ImportProgress, ImportRecord, Sort, Tag, View } from "./types";
+import type { Album, Counts, Filter, ImportProgress, ImportRecord, Mark, MarkSlot, Sort, Tag, View } from "./types";
 
 interface Toast {
   id: number;
@@ -15,14 +15,16 @@ class Store {
   view = $state<View>({ kind: "library" });
 
   /** Filter-bar fields; combined with the current view in `filter`. */
-  query = $state({ dateFrom: "", dateTo: "", minRating: 0, camera: "", text: "", tagIds: [] as number[] });
+  query = $state({ dateFrom: "", dateTo: "", minRating: 0, camera: "", origin: "", text: "", tagIds: [] as number[] });
   sort = $state<Sort>("takenDesc");
   thumbSize = $state(180);
 
   tags = $state.raw<Tag[]>([]);
   albums = $state.raw<Album[]>([]);
   cameras = $state.raw<string[]>([]);
-  counts = $state.raw<Counts>({ all: 0, favorites: 0, trash: 0 });
+  counts = $state.raw<Counts>({ all: 0, favorites: 0, trash: 0, marked: 0 });
+  marks = $state.raw<MarkSlot[]>([]);
+  sources = $state.raw<string[]>([]);
   imports = $state.raw<ImportRecord[]>([]);
 
   selection = new SvelteSet<number>();
@@ -34,6 +36,9 @@ class Store {
   importPreset = $state("");
   progress = $state.raw<ImportProgress | null>(null);
   toasts = $state<Toast[]>([]);
+  /** Mark whose batch is running, with copy progress. */
+  runningMark = $state<Mark | null>(null);
+  markProgress = $state<{ done: number; total: number } | null>(null);
 
   #toastId = 0;
   #lastImportRefresh = 0;
@@ -48,7 +53,9 @@ class Store {
       dateTo: q.dateTo || undefined,
       minRating: q.minRating || undefined,
       camera: q.camera || undefined,
+      origin: q.origin || undefined,
       text: q.text || undefined,
+      mark: v.kind === "mark" ? v.mark : undefined,
       tagIds,
       albumId: v.kind === "album" ? v.id : undefined,
       importId: v.kind === "import" ? v.id : undefined,
@@ -59,11 +66,12 @@ class Store {
 
   get hasQuery(): boolean {
     const q = this.query;
-    return !!(q.dateFrom || q.dateTo || q.minRating || q.camera || q.text || q.tagIds.length);
+    return !!(q.dateFrom || q.dateTo || q.minRating || q.camera || q.origin || q.text || q.tagIds.length);
   }
 
   async init() {
     await api.onImportProgress((p) => this.#onProgress(p));
+    await api.onMarkProgress((p) => (this.markProgress = { done: p.done, total: p.total }));
     try {
       const lib = await api.currentLibrary();
       this.root = lib?.root ?? null;
@@ -100,17 +108,21 @@ class Store {
 
   clearQuery() {
     // Mutate in place: components hold a reference to `query`.
-    Object.assign(this.query, { dateFrom: "", dateTo: "", minRating: 0, camera: "", text: "", tagIds: [] });
+    Object.assign(this.query, { dateFrom: "", dateTo: "", minRating: 0, camera: "", origin: "", text: "", tagIds: [] });
   }
 
   async refreshMeta() {
-    const [tags, albums, cameras, counts, imports] = await Promise.all([
+    const [tags, albums, cameras, counts, imports, marks, sources] = await Promise.all([
       api.listTags(),
       api.listAlbums(),
       api.listCameras(),
       api.counts(),
       api.listImports(),
+      api.listMarks(),
+      api.listSources(),
     ]);
+    this.marks = marks;
+    this.sources = sources;
     this.imports = imports;
     this.tags = tags;
     this.albums = albums;
@@ -135,6 +147,44 @@ class Store {
     } catch (e) {
       this.toast(errorText(e), true);
     }
+    this.version++;
+    await this.refreshMeta().catch(() => {});
+  }
+
+  markSlot(mark: Mark): MarkSlot | undefined {
+    return this.marks.find((s) => s.mark === mark);
+  }
+
+  /** "Delete", the label given to a custom mark, or "Mark 2". */
+  markName(mark: Mark): string {
+    return this.markSlot(mark)?.label || (mark === "x" ? "Delete" : `Mark ${mark}`);
+  }
+
+  /**
+   * Marks photos with `mark`, or clears it if they all carry it already.
+   * `current` gives the known marks of the photos.
+   */
+  toggleMark(ids: number[], mark: Mark, current: (id: number) => Mark | null | undefined) {
+    const clear = ids.every((id) => current(id) === mark);
+    return this.mutate(() => api.setMark(ids, clear ? null : mark));
+  }
+
+  /** Runs the batch action of `mark` on every photo carrying it. */
+  async runMark(mark: Mark) {
+    if (this.runningMark) return;
+    this.runningMark = mark;
+    this.markProgress = null;
+    try {
+      const r = await api.runMark(mark);
+      const parts = [`${this.markName(mark)}: ${r.done} photo(s) done`];
+      if (r.skipped) parts.push(`${r.skipped} already there`);
+      if (r.errors.length) parts.push(`${r.errors.length} failed — ${r.errors.slice(0, 3).join("; ")}`);
+      this.toast(parts.join(", "), r.errors.length > 0);
+    } catch (e) {
+      this.toast(errorText(e), true);
+    }
+    this.runningMark = null;
+    this.markProgress = null;
     this.version++;
     await this.refreshMeta().catch(() => {});
   }

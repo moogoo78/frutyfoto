@@ -5,6 +5,7 @@
   import ImportDialog from "./views/ImportDialog.svelte";
   import ImportHistory from "./views/ImportHistory.svelte";
   import Library from "./views/Library.svelte";
+  import Marks from "./views/Marks.svelte";
   import Sidebar from "./views/Sidebar.svelte";
   import Welcome from "./views/Welcome.svelte";
 
@@ -25,6 +26,8 @@
             <Duplicates />
           {:else if store.view.kind === "imports"}
             <ImportHistory />
+          {:else if store.view.kind === "marks"}
+            <Marks />
           {:else}
             <Library />
           {/if}

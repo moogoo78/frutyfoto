@@ -69,6 +69,12 @@ export class PhotoList {
     return photos.map((p) => p.id);
   }
 
+  /** Ids at indexes `start..start+count` (e.g. one day's photos). */
+  async idsInRange(start: number, count: number): Promise<number[]> {
+    const photos = await api.listPhotos(this.#filter, this.#sort, start, count);
+    return photos.map((p) => p.id);
+  }
+
   #setBuckets(buckets: Bucket[]) {
     this.buckets = buckets;
     this.total = buckets.reduce((n, b) => n + b.count, 0);

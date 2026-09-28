@@ -6,7 +6,9 @@
   import { PhotoList } from "../lib/photoList.svelte";
   import Stars from "../lib/Stars.svelte";
   import { store } from "../lib/store.svelte";
+  import SourceInput from "../lib/SourceInput.svelte";
   import TagInput from "../lib/TagInput.svelte";
+  import { MARKS, type Mark } from "../lib/types";
   import VirtualGrid from "../lib/VirtualGrid.svelte";
   import FilterBar from "./FilterBar.svelte";
   import Viewer from "./Viewer.svelte";
@@ -17,6 +19,8 @@
   let viewerIndex = $state<number | null>(null);
   let anchor: number | null = null;
   let showFilters = $state(false);
+  /** Name being typed for a new album made from the selection; null when closed. */
+  let newAlbumName = $state<string | null>(null);
 
   const key = $derived(JSON.stringify([store.filter, store.sort]));
   let loadedKey = "";
@@ -53,6 +57,7 @@
       case "album": return store.albums.find((a) => a.id === v.id)?.name ?? "Album";
       case "tag": return `#${store.tags.find((t) => t.id === v.id)?.name ?? ""}`;
       case "import": return `Import: ${basename(currentImport?.sourceDir ?? "")}`;
+      case "mark": return store.markName(v.mark);
       default: return "All photos";
     }
   });
@@ -60,6 +65,7 @@
   const selected = $derived([...store.selection]);
   const inTrash = $derived(store.view.kind === "trash");
   const albumId = $derived(store.view.kind === "album" ? store.view.id : null);
+  const markView = $derived(store.view.kind === "mark" ? store.view.mark : null);
 
   function select(i: number, e: MouseEvent) {
     const p = list.get(i);
@@ -88,8 +94,42 @@
   }
 
   async function emptyTrash() {
-    if (!(await ask(`Permanently delete ${store.counts.trash} photo(s)? This cannot be undone.`, { title: "Empty trash", kind: "warning" }))) return;
-    store.mutate(() => api.emptyTrash(), "Trash emptied");
+    const msg = `Remove ${store.counts.trash} photo(s) from the library? The files are moved to the system Trash, where you can still recover them.`;
+    if (!(await ask(msg, { title: "Empty trash", kind: "warning" }))) return;
+    store.mutate(() => api.emptyTrash(), "Moved to the system Trash");
+  }
+
+  function toggleMark(ids: number[], mark: Mark) {
+    store.toggleMark(ids, mark, (id) => findLoaded(id)?.mark);
+  }
+
+  /** Suggests an album name from the selected photos' dates. */
+  function suggestAlbumName(): string {
+    const days = selected.map((id) => findLoaded(id)?.takenAt.slice(0, 10)).filter(Boolean).sort() as string[];
+    if (!days.length) return "";
+    const [first, last] = [days[0], days[days.length - 1]];
+    return first === last ? first : `${first} – ${last}`;
+  }
+
+  async function createAlbumFromSelection() {
+    const name = newAlbumName?.trim();
+    newAlbumName = null;
+    if (!name) return;
+    const ids = selected;
+    let id = 0;
+    await store.mutate(async () => {
+      id = await api.createAlbum(name);
+      await api.addToAlbum(id, ids);
+    }, `Album “${name}” created with ${ids.length} photo(s)`);
+    if (id) store.selection.clear();
+  }
+
+  async function dayAction(action: "select" | "album", day: string, start: number, count: number) {
+    const ids = await list.idsInRange(start, count);
+    store.selection.clear();
+    for (const id of ids) store.selection.add(id);
+    anchor = start;
+    if (action === "album") newAlbumName = day;
   }
 
   function trashOrRestore(ids: number[]) {
@@ -106,7 +146,8 @@
     else if (e.key === "Escape") store.selection.clear();
     else if (e.key === "Enter" && anchor != null) viewerIndex = anchor;
     else if (!ids.length) return;
-    else if (/^[0-5]$/.test(e.key)) store.mutate(() => api.setRating(ids, Number(e.key)));
+    else if (e.shiftKey && /^Digit[0-5]$/.test(e.code)) store.mutate(() => api.setRating(ids, Number(e.code.slice(5))));
+    else if (e.key === "x" || /^[1-4]$/.test(e.key)) toggleMark(ids, e.key as Mark);
     else if (e.key === "f") {
       const allFav = ids.every((id) => findLoaded(id)?.favorite);
       store.mutate(() => api.setFavorite(ids, !allFav));
@@ -123,6 +164,11 @@
     }
   }
 
+  const focusSelect = (el: HTMLInputElement) => {
+    el.focus();
+    el.select();
+  };
+
   const singleRating = $derived(selected.length === 1 ? (findLoaded(selected[0])?.rating ?? 0) : 0);
 </script>
 
@@ -133,11 +179,23 @@
     {#if currentImport}
       <button class="link" onclick={() => store.setView({ kind: "imports" })} title="Back to import history">‹ Imports</button>
     {/if}
+    {#if markView}
+      <button class="link" onclick={() => store.setView({ kind: "marks" })} title="Back to marks">‹ Marks</button>
+      <span class="mark mark-{markView}">{markView}</span>
+    {/if}
     <h1 title={currentImport?.sourceDir}>{title}</h1>
     <span class="count">
       {list.total.toLocaleString()} photos{#if currentImport} · imported {fmtDateTime(currentImport.startedAt)}{/if}
     </span>
     <span class="grow"></span>
+    {#if markView && list.total > 0}
+      <button class:danger={markView === "x"} class:primary={markView !== "x"}
+        disabled={!!store.runningMark || !store.markSlot(markView)?.kind}
+        title={store.markSlot(markView)?.kind ? "" : "Set up this mark in the Marks view first"}
+        onclick={() => store.runMark(markView)}>
+        {store.runningMark === markView ? "Running…" : markView === "x" ? `Move ${list.total} to trash` : `Run on ${list.total}`}
+      </button>
+    {/if}
     {#if inTrash && store.counts.trash > 0}
       <button class="danger" onclick={emptyTrash}>Empty trash</button>
     {/if}
@@ -159,10 +217,32 @@
     <div class="selbar">
       <strong>{selected.length} selected</strong>
       {#if !inTrash}
+        <span class="marks" role="group" aria-label="Mark">
+          {#each MARKS as m}
+            <button class="mark mark-{m}" title="{store.markName(m)} ({m})" onclick={() => toggleMark(selected, m)}>{m}</button>
+          {/each}
+          <button class="unmark" title="Clear mark" onclick={() => store.mutate(() => api.setMark(selected, null))}>∅</button>
+        </span>
         <Stars value={singleRating} onchange={(n) => store.mutate(() => api.setRating(selected, n))} />
         <button onclick={() => store.mutate(() => api.setFavorite(selected, true))}>♥ Favorite</button>
         <button onclick={() => store.mutate(() => api.setFavorite(selected, false))}>♡ Unfavorite</button>
         <TagInput bind:this={tagInput} onadd={(names) => store.mutate(() => api.addTags(selected, names), "Tagged")} />
+        <SourceInput onset={(source) => store.mutate(() => api.setSource(selected, source), source ? `Source set to ${source}` : "Source cleared")} />
+        {#if newAlbumName != null}
+          <input
+            class="albumname"
+            placeholder="New album name"
+            bind:value={newAlbumName}
+            use:focusSelect
+            onblur={() => (newAlbumName = null)}
+            onkeydown={(e) => {
+              if (e.key === "Enter") createAlbumFromSelection();
+              if (e.key === "Escape") newAlbumName = null;
+              e.stopPropagation();
+            }} />
+        {:else}
+          <button onclick={() => (newAlbumName = suggestAlbumName())}>＋ New album</button>
+        {/if}
         {#if store.albums.length}
           <select
             onchange={(e) => {
@@ -205,7 +285,8 @@
         {/if}
       </div>
     {:else}
-      <VirtualGrid bind:this={grid} {list} onselect={select} onopen={(i) => (viewerIndex = i)} />
+      <VirtualGrid bind:this={grid} {list} onselect={select} onopen={(i) => (viewerIndex = i)}
+        ondayaction={inTrash ? undefined : dayAction} showOrigin={albumId != null} />
     {/if}
   </div>
 </section>
@@ -224,5 +305,9 @@
   .selbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px;
     background: var(--accent-bg); border-bottom: 1px solid var(--border); }
   .body { flex: 1; min-height: 0; }
+  .marks { display: inline-flex; gap: 3px; }
+  .marks button { padding: 0 7px; height: 26px; line-height: 26px; border: none; }
+  .marks .unmark { background: var(--cell); color: var(--muted); }
+  .albumname { width: 200px; }
   .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); }
 </style>

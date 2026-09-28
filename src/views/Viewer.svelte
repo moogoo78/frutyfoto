@@ -1,11 +1,12 @@
 <script lang="ts">
   import { api, src } from "../lib/api";
-  import { errorText, fmtBytes, fmtDateTime } from "../lib/format";
+  import { errorText, fmtBytes, fmtDateTime, originLabel } from "../lib/format";
   import type { PhotoList } from "../lib/photoList.svelte";
   import Stars from "../lib/Stars.svelte";
   import { store } from "../lib/store.svelte";
+  import SourceInput from "../lib/SourceInput.svelte";
   import TagInput from "../lib/TagInput.svelte";
-  import type { Photo, PhotoDetail } from "../lib/types";
+  import type { Mark, Photo, PhotoDetail } from "../lib/types";
 
   let {
     list,
@@ -51,7 +52,8 @@
     else if (e.key === "ArrowLeft") step(-1);
     else if (e.key === "Escape") onclose();
     else if (e.key === "i") showInfo = !showInfo;
-    else if (/^[0-5]$/.test(e.key)) store.mutate(() => api.setRating(ids, Number(e.key)));
+    else if (e.shiftKey && /^Digit[0-5]$/.test(e.code)) store.mutate(() => api.setRating(ids, Number(e.code.slice(5))));
+    else if (e.key === "x" || /^[1-4]$/.test(e.key)) store.toggleMark(ids, e.key as Mark, () => photo?.mark);
     else if (e.key === "f") store.mutate(() => api.setFavorite(ids, !photo!.favorite));
     else if (e.key === "t") tagInput?.focus();
     else if (e.key === "Delete") trash();
@@ -78,6 +80,7 @@
     <button class="nav next" disabled={index >= list.total - 1} onclick={() => step(1)} aria-label="Next">›</button>
     <div class="top">
       <span class="pos">{index + 1} / {list.total}</span>
+      {#if photo?.mark}<span class="mark mark-{photo.mark}" title={store.markName(photo.mark)}>{photo.mark} · {store.markName(photo.mark)}</span>{/if}
       <span class="spacer"></span>
       <button onclick={() => (showInfo = !showInfo)} title="Toggle info (i)">Info</button>
       <button onclick={onclose} title="Close (Esc)">✕</button>
@@ -109,6 +112,11 @@
         {#if p.gpsLat != null && p.gpsLon != null}
           <dt>Location</dt><dd>{p.gpsLat.toFixed(5)}, {p.gpsLon.toFixed(5)}</dd>
         {/if}
+        <dt>Source</dt>
+        <dd>
+          {originLabel(p) || "Unknown"}
+          {#if p.source}<button class="link" onclick={() => store.mutate(() => api.setSource([p.id], ""))}>reset</button>{/if}
+        </dd>
         <dt>Imported</dt><dd>{fmtDateTime(p.importedAt)}</dd>
         {#if p.sourcePath}<dt>Source</dt><dd class="path">{p.sourcePath}</dd>{/if}
         <dt>File</dt><dd class="path">{p.relPath}</dd>
@@ -121,6 +129,9 @@
         {/each}
       </div>
       <TagInput bind:this={tagInput} onadd={(names) => store.mutate(() => api.addTags([p.id], names))} />
+
+      <h3>Source</h3>
+      <SourceInput onset={(s) => store.mutate(() => api.setSource([p.id], s))} />
 
       <h3>Albums</h3>
       <div class="chips">
@@ -154,6 +165,7 @@
   .top { position: absolute; top: 0; left: 0; right: 0; display: flex; gap: 8px; padding: 10px 12px;
     background: linear-gradient(rgb(0 0 0 / 0.6), transparent); }
   .pos { color: #ccc; align-self: center; font-size: 13px; }
+  .top .mark { align-self: center; height: 24px; text-transform: none; }
   .spacer { flex: 1; }
   .nav { position: absolute; top: 50%; transform: translateY(-50%); font-size: 40px; width: 52px; height: 80px;
     background: rgb(0 0 0 / 0.3); border: none; color: #fff; border-radius: 8px; }

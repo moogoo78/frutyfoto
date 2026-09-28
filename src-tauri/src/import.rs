@@ -62,10 +62,12 @@ pub fn needs_preview(path: &Path) -> bool {
 }
 
 /// Copies every supported image under `src` into the library. Source files are only read.
+/// `source` optionally labels where the photos came from (e.g. "LINE").
 /// `on_progress` is called (throttled) while running and once more when finished.
 pub fn run(
     lib: &Library,
     src: &Path,
+    source: Option<&str>,
     cancel: &AtomicBool,
     on_progress: impl Fn(&ImportProgress) + Sync,
 ) -> Result<ImportProgress> {
@@ -93,6 +95,7 @@ pub fn run(
         conn.last_insert_rowid()
     };
 
+    let source = source.map(str::trim).filter(|s| !s.is_empty());
     let progress = Mutex::new(ImportProgress { import_id, total: files.len(), ..Default::default() });
     let last_emit = Mutex::new(Instant::now() - PROGRESS_INTERVAL);
     let claimed = Mutex::new(HashSet::<String>::new());
@@ -103,7 +106,7 @@ pub fn run(
         if cancel.load(Ordering::Relaxed) {
             return;
         }
-        let result = import_one(lib, import_id, path, &claimed);
+        let result = import_one(lib, import_id, source, path, &claimed);
         let mut p = progress.lock().unwrap();
         p.done += 1;
         p.current = path.to_string_lossy().into_owned();
@@ -146,7 +149,7 @@ pub fn run(
     Ok(p)
 }
 
-fn import_one(lib: &Library, import_id: i64, src: &Path, claimed: &Mutex<HashSet<String>>) -> Result<Outcome> {
+fn import_one(lib: &Library, import_id: i64, source: Option<&str>, src: &Path, claimed: &Mutex<HashSet<String>>) -> Result<Outcome> {
     let hash = hash_file(src)?;
 
     // Claim the hash so identical files within one import aren't copied twice.
@@ -166,14 +169,14 @@ fn import_one(lib: &Library, import_id: i64, src: &Path, claimed: &Mutex<HashSet
         claimed.insert(hash.clone());
     }
 
-    let result = copy_and_index(lib, import_id, src, &hash);
+    let result = copy_and_index(lib, import_id, source, src, &hash);
     if result.is_err() {
         claimed.lock().unwrap().remove(&hash);
     }
     result.map(|_| Outcome::Added)
 }
 
-fn copy_and_index(lib: &Library, import_id: i64, src: &Path, hash: &str) -> Result<()> {
+fn copy_and_index(lib: &Library, import_id: i64, source: Option<&str>, src: &Path, hash: &str) -> Result<()> {
     let meta = std::fs::metadata(src)?;
     let exif = exif::read(src);
     let taken_at = exif.taken_at.unwrap_or_else(|| mtime(&meta));
@@ -207,8 +210,8 @@ fn copy_and_index(lib: &Library, import_id: i64, src: &Path, hash: &str) -> Resu
         .execute(
             "INSERT INTO photos (hash, phash, rel_path, orig_name, source_path, taken_at, imported_at,
                 width, height, file_size, mime, camera_make, camera_model, lens, iso, f_number,
-                exposure, focal_len, gps_lat, gps_lon, orientation, import_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                exposure, focal_len, gps_lat, gps_lon, orientation, import_id, source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
             params![
                 hash,
                 processed.phash as i64,
@@ -232,6 +235,7 @@ fn copy_and_index(lib: &Library, import_id: i64, src: &Path, hash: &str) -> Resu
                 exif.gps_lon,
                 exif.orientation,
                 import_id,
+                source,
             ],
         )
         .map_err(|e| cleanup(e.into()))?;
@@ -239,7 +243,7 @@ fn copy_and_index(lib: &Library, import_id: i64, src: &Path, hash: &str) -> Resu
 }
 
 /// Atomically creates `dir/name`, or `dir/stem-N.ext` if taken.
-fn reserve_dest(dir: &Path, name: &str) -> Result<(PathBuf, File)> {
+pub fn reserve_dest(dir: &Path, name: &str) -> Result<(PathBuf, File)> {
     let p = Path::new(name);
     let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
@@ -255,7 +259,7 @@ fn reserve_dest(dir: &Path, name: &str) -> Result<(PathBuf, File)> {
 }
 
 /// Copies `src` into `dest`, verifying the bytes written match the expected hash.
-fn copy_verified(src: &Path, mut dest: File, expected_hash: &str) -> Result<()> {
+pub fn copy_verified(src: &Path, mut dest: File, expected_hash: &str) -> Result<()> {
     let mut reader = BufReader::with_capacity(1 << 20, File::open(src)?);
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; 1 << 20];

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { src } from "./api";
-  import { fmtDay } from "./format";
+  import { fmtDay, originLabel } from "./format";
   import type { PhotoList } from "./photoList.svelte";
   import { store } from "./store.svelte";
 
@@ -8,10 +8,16 @@
     list,
     onopen,
     onselect,
+    ondayaction,
+    showOrigin = false,
   }: {
     list: PhotoList;
     onopen: (index: number) => void;
     onselect: (index: number, e: MouseEvent) => void;
+    /** Header buttons: select a day's photos, or make an album from them. */
+    ondayaction?: (action: "select" | "album", day: string, start: number, count: number) => void;
+    /** Badge each photo with where it came from (phone, camera, LINE…). */
+    showOrigin?: boolean;
   } = $props();
 
   const HEADER = 44;
@@ -28,7 +34,7 @@
   const cell = $derived(Math.max(40, (width - PAD * 2 - GAP * (cols - 1)) / cols));
 
   type Row =
-    | { kind: "header"; top: number; day: string; count: number }
+    | { kind: "header"; top: number; day: string; count: number; start: number }
     | { kind: "photos"; top: number; start: number; n: number };
 
   const layout = $derived.by(() => {
@@ -37,7 +43,7 @@
     let index = 0;
     for (const b of list.buckets) {
       if (b.day) {
-        rows.push({ kind: "header", top, day: b.day, count: b.count });
+        rows.push({ kind: "header", top, day: b.day, count: b.count, start: index });
         top += HEADER;
       }
       for (let i = 0; i < b.count; i += cols) {
@@ -110,7 +116,14 @@
   <div class="spacer" style:height="{layout.height}px">
     {#each visible as row (row.top)}
       {#if row.kind === "header"}
-        <h3 class="day" style:top="{row.top}px">{fmtDay(row.day)} <span>{row.count}</span></h3>
+        <h3 class="day" style:top="{row.top}px">
+          {fmtDay(row.day)} <span>{row.count}</span>
+          {#if ondayaction}
+            <button class="link dayact" onclick={() => ondayaction("select", row.day, row.start, row.count)}>Select</button>
+            <button class="link dayact" title="Create an album from this day's photos"
+              onclick={() => ondayaction("album", row.day, row.start, row.count)}>＋ New album</button>
+          {/if}
+        </h3>
       {/if}
     {/each}
     {#each cells as c (c.i)}
@@ -128,6 +141,10 @@
         ondblclick={() => onopen(c.i)}>
         {#if p}
           <img src={src(p.thumb)} alt={p.origName} loading="lazy" decoding="async" draggable="false" />
+          {#if p.mark}<span class="mark mark-{p.mark} markbadge">{p.mark}</span>{/if}
+          {#if showOrigin && originLabel(p)}
+            <span class="origin" class:custom={!!p.source}>{originLabel(p)}</span>
+          {/if}
           {#if p.favorite || p.rating}
             <span class="badges">
               {#if p.favorite}<span class="fav">♥</span>{/if}
@@ -151,6 +168,8 @@
     display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600;
   }
   .day span { color: var(--muted); font-weight: 400; font-size: 13px; }
+  .dayact { font-size: 12px; font-weight: 400; margin-left: 6px; visibility: hidden; }
+  .day:hover .dayact { visibility: visible; }
   .cell {
     position: absolute; padding: 0; border: 2px solid transparent; border-radius: 6px;
     background: var(--cell); overflow: hidden; cursor: default;
@@ -163,6 +182,12 @@
     border-radius: 4px; background: rgb(0 0 0 / 0.55); font-size: 11px;
   }
   .fav { color: #ff6b81; }
+  .markbadge { position: absolute; top: 4px; right: 4px; box-shadow: 0 1px 4px rgb(0 0 0 / 0.5); }
+  .origin {
+    position: absolute; top: 4px; left: 4px; padding: 1px 6px; border-radius: 4px; font-size: 11px;
+    background: rgb(0 0 0 / 0.55); color: #ddd;
+  }
+  .origin.custom { background: var(--accent); color: #fff; }
   .rating { color: var(--star); letter-spacing: -1px; }
   .pill {
     position: absolute; top: 8px; left: 16px;

@@ -9,9 +9,11 @@ use crate::error::{AppError, Result};
 use crate::import::{self, ImportFailure, ImportProgress};
 use crate::queries::ImportRecord;
 use crate::library::Library;
+use crate::marks::{self, ActionKind, MarkSlot, RunResult};
 use crate::queries::{self, Album, Bucket, Counts, Filter, Photo, PhotoDetail, Sort, Tag};
 
 pub const PROGRESS_EVENT: &str = "import://progress";
+pub const MARK_PROGRESS_EVENT: &str = "marks://progress";
 
 #[derive(Default)]
 pub struct AppState {
@@ -67,6 +69,12 @@ fn activate(app: &AppHandle, root: &Path, create: bool) -> Result<LibraryInfo> {
     for dir in lib.served_dirs() {
         scope.allow_directory(&dir, true).map_err(|e| AppError::msg(e.to_string()))?;
     }
+    // Albums made before album folders existed: move their photos into the folders.
+    match crate::storage::rehome_all(&lib) {
+        Ok(0) => {}
+        Ok(n) => eprintln!("moved {n} photo(s) into album folders"),
+        Err(e) => eprintln!("moving photos into album folders failed: {e}"),
+    }
     let info = LibraryInfo { root: lib.root.to_string_lossy().into_owned() };
     let lib = Arc::new(lib);
     *app.state::<AppState>().library.lock().unwrap() = Some(lib.clone());
@@ -103,7 +111,12 @@ pub async fn current_library(state: State<'_, AppState>) -> Result<Option<Librar
 }
 
 #[tauri::command]
-pub async fn start_import(app: AppHandle, state: State<'_, AppState>, src: String) -> Result<()> {
+pub async fn start_import(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    src: String,
+    source: Option<String>,
+) -> Result<()> {
     let lib = state.lib()?;
     if state.importing.swap(true, Ordering::SeqCst) {
         return Err(AppError::msg("an import is already running"));
@@ -115,7 +128,7 @@ pub async fn start_import(app: AppHandle, state: State<'_, AppState>, src: Strin
         let emit = |p: &ImportProgress| {
             let _ = app.emit(PROGRESS_EVENT, p);
         };
-        if let Err(e) = import::run(&lib, Path::new(&src), &cancel, emit) {
+        if let Err(e) = import::run(&lib, Path::new(&src), source.as_deref(), &cancel, emit) {
             emit(&ImportProgress {
                 finished: true,
                 failed: 1,
@@ -253,4 +266,54 @@ pub async fn restore_photos(state: State<'_, AppState>, ids: Vec<i64>) -> Result
 #[tauri::command]
 pub async fn empty_trash(state: State<'_, AppState>) -> Result<usize> {
     queries::empty_trash(&*state.lib()?)
+}
+
+#[tauri::command]
+pub async fn set_mark(state: State<'_, AppState>, ids: Vec<i64>, mark: Option<String>) -> Result<()> {
+    marks::set_mark(&*state.lib()?, &ids, mark.as_deref())
+}
+
+#[tauri::command]
+pub async fn list_marks(state: State<'_, AppState>) -> Result<Vec<MarkSlot>> {
+    marks::list_slots(&*state.lib()?)
+}
+
+#[tauri::command]
+pub async fn set_mark_action(
+    state: State<'_, AppState>,
+    slot: i64,
+    label: String,
+    kind: Option<ActionKind>,
+    target: String,
+) -> Result<()> {
+    marks::set_action(&*state.lib()?, slot, &label, kind, &target)
+}
+
+#[derive(Clone, Serialize)]
+struct MarkProgress {
+    mark: String,
+    done: usize,
+    total: usize,
+}
+
+#[tauri::command]
+pub async fn run_mark(app: AppHandle, state: State<'_, AppState>, mark: String) -> Result<RunResult> {
+    let lib = state.lib()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        marks::run(&lib, &mark, |done, total| {
+            let _ = app.emit(MARK_PROGRESS_EVENT, MarkProgress { mark: mark.clone(), done, total });
+        })
+    })
+    .await
+    .map_err(|e| AppError::msg(e.to_string()))?
+}
+
+#[tauri::command]
+pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<String>> {
+    marks::list_sources(&*state.lib()?)
+}
+
+#[tauri::command]
+pub async fn set_source(state: State<'_, AppState>, ids: Vec<i64>, source: String) -> Result<()> {
+    marks::set_source(&*state.lib()?, &ids, &source)
 }

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{AppError, Result};
 use crate::import::now;
 use crate::library::Library;
+use crate::storage;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +33,12 @@ pub struct Photo {
     pub rating: i64,
     pub favorite: bool,
     pub trashed_at: Option<String>,
+    /// Culling mark: "x" (to delete) or "1".."4" (custom actions).
+    pub mark: Option<String>,
+    /// Where the photo came from, set by the user (e.g. "LINE", "Facebook").
+    pub source: Option<String>,
+    /// "phone", "camera" or "unknown", guessed from EXIF make/model.
+    pub device: &'static str,
     /// Absolute paths, filled in from the library root. `display` is what the
     /// viewer shows: the original, or a JPEG preview for formats like HEIC.
     pub path: String,
@@ -41,7 +48,7 @@ pub struct Photo {
 
 const PHOTO_COLS: &str = "p.id, p.hash, p.rel_path, p.orig_name, p.source_path, p.taken_at, p.imported_at,
     p.width, p.height, p.file_size, p.mime, p.camera_make, p.camera_model, p.lens, p.iso, p.f_number,
-    p.exposure, p.focal_len, p.gps_lat, p.gps_lon, p.rating, p.favorite, p.trashed_at";
+    p.exposure, p.focal_len, p.gps_lat, p.gps_lon, p.rating, p.favorite, p.trashed_at, p.mark, p.source";
 
 fn photo_from_row(lib: &Library, r: &Row) -> rusqlite::Result<Photo> {
     let hash: String = r.get(1)?;
@@ -49,6 +56,8 @@ fn photo_from_row(lib: &Library, r: &Row) -> rusqlite::Result<Photo> {
     let trashed_at: Option<String> = r.get(22)?;
     let path = lib.photo_path(&rel_path, trashed_at.is_some());
     let display = if crate::import::needs_preview(&path) { lib.preview_path(&hash) } else { path.clone() };
+    let camera_make: Option<String> = r.get(11)?;
+    let camera_model: Option<String> = r.get(12)?;
     Ok(Photo {
         id: r.get(0)?,
         path: path.to_string_lossy().into_owned(),
@@ -64,8 +73,9 @@ fn photo_from_row(lib: &Library, r: &Row) -> rusqlite::Result<Photo> {
         height: r.get(8)?,
         file_size: r.get(9)?,
         mime: r.get(10)?,
-        camera_make: r.get(11)?,
-        camera_model: r.get(12)?,
+        device: crate::db::device_kind(camera_make.as_deref(), camera_model.as_deref()),
+        camera_make,
+        camera_model,
         lens: r.get(13)?,
         iso: r.get(14)?,
         f_number: r.get(15)?,
@@ -76,6 +86,8 @@ fn photo_from_row(lib: &Library, r: &Row) -> rusqlite::Result<Photo> {
         rating: r.get(20)?,
         favorite: r.get(21)?,
         trashed_at,
+        mark: r.get(23)?,
+        source: r.get(24)?,
     })
 }
 
@@ -93,6 +105,10 @@ pub struct Filter {
     pub favorite: Option<bool>,
     pub camera: Option<String>,
     pub text: Option<String>,
+    /// A mark ("x", "1".."4"), or "any" for every marked photo.
+    pub mark: Option<String>,
+    /// The user-set source if any, else "phone" / "camera" / "unknown".
+    pub origin: Option<String>,
     pub trashed: bool,
 }
 
@@ -173,8 +189,22 @@ fn where_clause(f: &Filter) -> (String, Vec<Box<dyn ToSql>>) {
         args.push(Box::new(pat.clone()));
         args.push(Box::new(pat));
     }
+    if let Some(m) = f.mark.as_ref().filter(|s| !s.is_empty()) {
+        if m == "any" {
+            clauses.push("p.mark IS NOT NULL".into());
+        } else {
+            clauses.push("p.mark = ?".into());
+            args.push(Box::new(m.clone()));
+        }
+    }
+    if let Some(o) = f.origin.as_ref().filter(|s| !s.is_empty()) {
+        clauses.push(format!("{ORIGIN} = ?"));
+        args.push(Box::new(o.clone()));
+    }
     (clauses.join(" AND "), args)
 }
+
+const ORIGIN: &str = "COALESCE(p.source, device_kind(p.camera_make, p.camera_model))";
 
 pub fn list_photos(lib: &Library, f: &Filter, sort: Sort, offset: i64, limit: i64) -> Result<Vec<Photo>> {
     let (wh, mut args) = where_clause(f);
@@ -373,13 +403,28 @@ pub fn rename_album(lib: &Library, id: i64, name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(AppError::msg("album name is empty"));
     }
+    storage::rename_album_dir(lib, id, name)?;
     lib.conn().execute("UPDATE albums SET name = ?1 WHERE id = ?2", params![name, id])?;
     Ok(())
 }
 
+/// Deletes an album; its photos move back to `originals/` (or to another album they're in).
 pub fn delete_album(lib: &Library, id: i64) -> Result<()> {
+    let ids = album_photo_ids(lib, id)?;
+    let dir: Option<String> = lib.conn().query_row("SELECT dir FROM albums WHERE id = ?1", [id], |r| r.get(0))?;
     lib.conn().execute("DELETE FROM albums WHERE id = ?1", [id])?;
-    Ok(())
+    let moved = storage::rehome(lib, &ids);
+    if let Some(dir) = dir {
+        storage::remove_album_dir(lib, &dir);
+    }
+    moved
+}
+
+fn album_photo_ids(lib: &Library, album_id: i64) -> Result<Vec<i64>> {
+    let conn = lib.conn();
+    let mut stmt = conn.prepare("SELECT photo_id FROM album_photos WHERE album_id = ?1")?;
+    let rows = stmt.query_map([album_id], |r| r.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn add_to_album(lib: &Library, album_id: i64, ids: &[i64]) -> Result<()> {
@@ -397,7 +442,8 @@ pub fn add_to_album(lib: &Library, album_id: i64, ids: &[i64]) -> Result<()> {
         )? as i64;
     }
     tx.commit()?;
-    Ok(())
+    drop(conn);
+    storage::rehome(lib, ids)
 }
 
 pub fn remove_from_album(lib: &Library, album_id: i64, ids: &[i64]) -> Result<()> {
@@ -405,7 +451,7 @@ pub fn remove_from_album(lib: &Library, album_id: i64, ids: &[i64]) -> Result<()
         &format!("DELETE FROM album_photos WHERE album_id = ?1 AND photo_id IN ({})", id_list(ids)),
         [album_id],
     )?;
-    Ok(())
+    storage::rehome(lib, ids)
 }
 
 pub fn set_album_cover(lib: &Library, album_id: i64, photo_id: i64) -> Result<()> {
@@ -428,6 +474,7 @@ pub struct Counts {
     pub all: i64,
     pub favorites: i64,
     pub trash: i64,
+    pub marked: i64,
 }
 
 pub fn counts(lib: &Library) -> Result<Counts> {
@@ -435,10 +482,11 @@ pub fn counts(lib: &Library) -> Result<Counts> {
         "SELECT
             COALESCE(SUM(trashed_at IS NULL), 0),
             COALESCE(SUM(trashed_at IS NULL AND favorite = 1), 0),
-            COALESCE(SUM(trashed_at IS NOT NULL), 0)
+            COALESCE(SUM(trashed_at IS NOT NULL), 0),
+            COALESCE(SUM(trashed_at IS NULL AND mark IS NOT NULL), 0)
          FROM photos",
         [],
-        |r| Ok(Counts { all: r.get(0)?, favorites: r.get(1)?, trash: r.get(2)? }),
+        |r| Ok(Counts { all: r.get(0)?, favorites: r.get(1)?, trash: r.get(2)?, marked: r.get(3)? }),
     )?)
 }
 
@@ -559,8 +607,14 @@ pub fn restore_photos(lib: &Library, ids: &[i64]) -> Result<()> {
     Ok(())
 }
 
-/// Permanently deletes every trashed photo (file, thumbnail and database row).
+/// Removes every trashed photo from the library. Files go to the system Trash (so they can
+/// still be recovered from the desktop); thumbnails, previews and database rows are deleted.
 pub fn empty_trash(lib: &Library) -> Result<usize> {
+    empty_trash_with(lib, |path| trash::delete(path).map_err(|e| AppError::msg(format!("{}: {e}", path.display()))))
+}
+
+/// `empty_trash` with a custom way of disposing of each file (tests avoid the real Trash).
+pub fn empty_trash_with(lib: &Library, discard: impl Fn(&std::path::Path) -> Result<()>) -> Result<usize> {
     let items: Vec<(i64, String, String)> = {
         let conn = lib.conn();
         let mut stmt = conn.prepare("SELECT id, rel_path, hash FROM photos WHERE trashed_at IS NOT NULL")?;
@@ -568,14 +622,27 @@ pub fn empty_trash(lib: &Library) -> Result<usize> {
         rows.collect::<rusqlite::Result<_>>()?
     };
     for (id, rel, hash) in &items {
-        match std::fs::remove_file(lib.photo_path(rel, true)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
+        let path = lib.photo_path(rel, true);
+        if path.exists() {
+            discard(&path)?;
         }
         let _ = std::fs::remove_file(lib.thumb_path(hash));
         let _ = std::fs::remove_file(lib.preview_path(hash));
         lib.conn().execute("DELETE FROM photos WHERE id = ?1", [id])?;
     }
+    for dir in ["originals", "albums"] {
+        prune_tree(&lib.trash_dir().join(dir));
+    }
     Ok(items.len())
+}
+
+/// Removes empty folders below `dir` (not `dir` itself).
+fn prune_tree(dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        if e.file_type().is_ok_and(|t| t.is_dir()) {
+            prune_tree(&e.path());
+            let _ = std::fs::remove_dir(e.path());
+        }
+    }
 }
