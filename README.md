@@ -81,3 +81,7 @@ folder pickers.
 | `←` `→` / `I` | — | previous/next / toggle info |
 
 Drag thumbnails onto an album in the sidebar to add them. Double-click an album to rename it.
+
+## License
+
+MIT — see [LICENSE](LICENSE). Release builds bundle libheif and libde265, which are LGPL-licensed.
