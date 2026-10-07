@@ -6,7 +6,8 @@ use rusqlite::Connection;
 use crate::db;
 use crate::error::{AppError, Result};
 
-const META_DIR: &str = ".fotolake";
+const META_DIR: &str = ".frutyfoto";
+const LEGACY_META_DIR: &str = ".fotolake";
 
 /// A library root on disk plus its open database.
 pub struct Library {
@@ -17,11 +18,16 @@ pub struct Library {
 impl Library {
     /// Opens an existing library, or initialises one when `create` is set.
     pub fn open(root: &Path, create: bool) -> Result<Self> {
+        // Libraries created before the rename to frutyfoto keep their metadata in `.fotolake`.
+        let legacy = root.join(LEGACY_META_DIR);
+        if legacy.is_dir() && !root.join(META_DIR).exists() {
+            std::fs::rename(&legacy, root.join(META_DIR))?;
+        }
         let db_path = root.join(META_DIR).join("library.db");
         if !db_path.exists() {
             if !create {
                 return Err(AppError::msg(format!(
-                    "{} is not a foto-lake library",
+                    "{} is not a frutyfoto library",
                     root.display()
                 )));
             }
@@ -30,7 +36,7 @@ impl Library {
             }
         }
         let root = root.to_path_buf();
-        for dir in ["originals", "albums", ".fotolake/thumbs", ".fotolake/previews", ".fotolake/trash"] {
+        for dir in ["originals", "albums", ".frutyfoto/thumbs", ".frutyfoto/previews", ".frutyfoto/trash"] {
             std::fs::create_dir_all(root.join(dir))?;
         }
         let conn = db::open(&db_path)?;
@@ -62,7 +68,7 @@ impl Library {
         self.root.join(META_DIR).join("previews")
     }
 
-    /// Folders the webview loads images from. Those inside the hidden `.fotolake` dir must
+    /// Folders the webview loads images from. Those inside the hidden `.frutyfoto` dir must
     /// be listed explicitly: Tauri's scope doesn't match dot-directories via `**` on Unix.
     pub fn served_dirs(&self) -> [PathBuf; 5] {
         [self.originals_dir(), self.albums_dir(), self.thumbs_dir(), self.previews_dir(), self.trash_dir()]

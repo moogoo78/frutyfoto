@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "foto-lake",
+  "productName": "frutyfoto",
   "version": "0.1.0",
-  "identifier": "io.github.moogoo78.fotolake",
+  "identifier": "io.github.moogoo78.frutyfoto",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "foto-lake", "width": 1280, "height": 820, "minWidth": 800, "minHeight": 500, "dragDropEnabled": false }],
+    "windows": [{ "title": "frutyfoto", "width": 1280, "height": 820, "minWidth": 800, "minHeight": 500, "dragDropEnabled": false }],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'",
       "assetProtocol": { "enable": true, "scope": [] }

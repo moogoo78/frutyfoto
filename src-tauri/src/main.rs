@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    foto_lake_lib::run()
+    frutyfoto_lib::run()
 }

@@ -43,7 +43,7 @@
   }
 
   async function switchLibrary() {
-    const dir = await open({ directory: true, title: "Open foto-lake library" });
+    const dir = await open({ directory: true, title: "Open frutyfoto library" });
     if (typeof dir === "string") store.openLibrary(dir, false);
   }
 
@@ -52,7 +52,7 @@
 
 <nav class="sidebar">
   <div class="brand">
-    <span class="logo">◒</span> foto-lake
+    <span class="logo">◒</span> frutyfoto
   </div>
   <button class="primary import" onclick={() => store.openImport()}>＋ Import photos</button>
 

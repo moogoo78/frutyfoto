@@ -5,7 +5,7 @@
   async function choose(create: boolean) {
     const dir = await open({
       directory: true,
-      title: create ? "Choose an empty folder for the new library" : "Open an existing foto-lake library",
+      title: create ? "Choose an empty folder for the new library" : "Open an existing frutyfoto library",
     });
     if (typeof dir === "string") store.openLibrary(dir, create);
   }
@@ -14,7 +14,7 @@
 <div class="welcome">
   <div class="card">
     <div class="logo">◒</div>
-    <h1>foto-lake</h1>
+    <h1>frutyfoto</h1>
     <p>Keep all your photos in one organised library, sorted by date, with tags, albums, ratings and duplicate detection.</p>
     <div class="buttons">
       <button class="primary" onclick={() => choose(true)}>Create new library</button>

@@ -965,7 +965,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "foto-lake"
+name = "four-cc"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "795cbfc56d419a7ce47ccbb7504dd9a5b7c484c083c356e797de08bd988d9629"
+
+[[package]]
+name = "frutyfoto"
 version = "0.1.0"
 dependencies = [
  "blake3",
@@ -986,12 +992,6 @@ dependencies = [
  "trash",
  "walkdir",
 ]
-
-[[package]]
-name = "four-cc"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "795cbfc56d419a7ce47ccbb7504dd9a5b7c484c083c356e797de08bd988d9629"
 
 [[package]]
 name = "futures-channel"

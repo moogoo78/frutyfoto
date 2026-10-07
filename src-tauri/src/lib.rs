@@ -57,5 +57,5 @@ pub fn run() {
             set_source,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running foto-lake");
+        .expect("error while running frutyfoto");
 }

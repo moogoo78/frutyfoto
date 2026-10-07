@@ -5,9 +5,9 @@ use std::sync::atomic::AtomicBool;
 use chrono::{Local, NaiveDate, TimeZone};
 use exif::experimental::Writer;
 use exif::{Field, In, Tag, Value};
-use foto_lake_lib::import::{self, hash_file, ImportProgress};
-use foto_lake_lib::library::Library;
-use foto_lake_lib::queries::{self, Filter, Sort};
+use frutyfoto_lib::import::{self, hash_file, ImportProgress};
+use frutyfoto_lib::library::Library;
+use frutyfoto_lib::queries::{self, Filter, Sort};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 
@@ -79,7 +79,7 @@ fn env() -> Env {
 }
 
 /// Empties the trash without touching the real system Trash.
-fn empty_trash(lib: &Library) -> foto_lake_lib::error::Result<usize> {
+fn empty_trash(lib: &Library) -> frutyfoto_lib::error::Result<usize> {
     queries::empty_trash_with(lib, |p| Ok(std::fs::remove_file(p)?))
 }
 
@@ -254,6 +254,16 @@ fn reopening_requires_existing_library() {
 }
 
 #[test]
+fn opens_library_with_legacy_meta_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    Library::open(tmp.path(), true).unwrap();
+    std::fs::rename(tmp.path().join(".frutyfoto"), tmp.path().join(".fotolake")).unwrap();
+    Library::open(tmp.path(), false).unwrap();
+    assert!(tmp.path().join(".frutyfoto/library.db").exists());
+    assert!(!tmp.path().join(".fotolake").exists());
+}
+
+#[test]
 fn imports_heic_with_exif_thumbnail_and_preview() {
     let Env { _tmp, src, lib } = env();
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/sample.heic");
@@ -360,11 +370,11 @@ fn import_history_records_each_run() {
 #[test]
 fn migration_links_existing_photos_to_their_import() {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(tmp.path().join(".fotolake")).unwrap();
+    std::fs::create_dir_all(tmp.path().join(".frutyfoto")).unwrap();
     {
         // A library created before import history existed (schema v1).
-        let conn = rusqlite::Connection::open(tmp.path().join(".fotolake/library.db")).unwrap();
-        conn.execute_batch(foto_lake_lib::db::MIGRATIONS[0]).unwrap();
+        let conn = rusqlite::Connection::open(tmp.path().join(".frutyfoto/library.db")).unwrap();
+        conn.execute_batch(frutyfoto_lib::db::MIGRATIONS[0]).unwrap();
         conn.execute_batch(
             "PRAGMA user_version = 1;
              INSERT INTO imports (id, source_dir, started_at, finished_at, added)
@@ -469,15 +479,15 @@ fn existing_album_photos_are_moved_into_folders_on_open() {
     let album = queries::create_album(&lib, "Old").unwrap();
     // As an older version would have left it: linked, but the file still in originals.
     lib.conn().execute("INSERT INTO album_photos (album_id, photo_id) VALUES (?1, ?2)", [album, ids[0]]).unwrap();
-    assert_eq!(foto_lake_lib::storage::rehome_all(&lib).unwrap(), 1);
+    assert_eq!(frutyfoto_lib::storage::rehome_all(&lib).unwrap(), 1);
     assert_eq!(rel_of(&lib, ids[0]), "albums/Old/p0.jpg");
     assert!(lib.root.join("albums/Old/p0.jpg").is_file());
-    assert_eq!(foto_lake_lib::storage::rehome_all(&lib).unwrap(), 0);
+    assert_eq!(frutyfoto_lib::storage::rehome_all(&lib).unwrap(), 0);
 }
 
 #[test]
 fn marks_are_set_filtered_and_run() {
-    use foto_lake_lib::marks::{self, ActionKind};
+    use frutyfoto_lib::marks::{self, ActionKind};
     let Env { _tmp, src, lib } = env();
     let ids = three_photos(&lib, &src);
     let find = |f: Filter| -> Vec<i64> {
@@ -534,7 +544,7 @@ fn marks_are_set_filtered_and_run() {
 
 #[test]
 fn sources_and_device_kind() {
-    use foto_lake_lib::db::device_kind;
+    use frutyfoto_lib::db::device_kind;
     assert_eq!(device_kind(Some("Apple"), Some("iPhone 15 Pro")), "phone");
     assert_eq!(device_kind(Some("samsung"), Some("SM-S918B")), "phone");
     assert_eq!(device_kind(Some("SONY"), Some("ILCE-7M4")), "camera");
@@ -557,15 +567,15 @@ fn sources_and_device_kind() {
     assert_eq!(names("camera"), vec!["a.jpg"]);
     assert_eq!(names("phone"), vec!["b.jpg"]);
     assert_eq!(names("LINE"), vec!["c.jpg"]);
-    assert_eq!(foto_lake_lib::marks::list_sources(&lib).unwrap(), vec!["LINE"]);
+    assert_eq!(frutyfoto_lib::marks::list_sources(&lib).unwrap(), vec!["LINE"]);
 
     let a = queries::list_photos(&lib, &Filter { origin: Some("camera".into()), ..Default::default() }, Sort::TakenAsc, 0, 1)
         .unwrap()[0]
         .clone();
     assert_eq!((a.device, a.source.as_deref()), ("camera", None));
-    foto_lake_lib::marks::set_source(&lib, &[a.id], "Facebook").unwrap();
+    frutyfoto_lib::marks::set_source(&lib, &[a.id], "Facebook").unwrap();
     assert_eq!(names("Facebook"), vec!["a.jpg"]);
-    foto_lake_lib::marks::set_source(&lib, &[a.id], "  ").unwrap();
+    frutyfoto_lib::marks::set_source(&lib, &[a.id], "  ").unwrap();
     assert_eq!(names("camera"), vec!["a.jpg"]);
 }
 

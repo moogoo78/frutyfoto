@@ -1,11 +1,11 @@
 [package]
-name = "foto-lake"
+name = "frutyfoto"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
 [lib]
-name = "foto_lake_lib"
+name = "frutyfoto_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
